@@ -2,7 +2,7 @@
 
 import { useState, useEffect } from "react";
 import PropTypes from "prop-types";
-import { Badge, Button, Input, Modal, Select } from "@/shared/components";
+import { Badge, Button, Input, Modal, Select, Toggle } from "@/shared/components";
 
 const VARIANT_CONFIG = {
   openai: {
@@ -41,6 +41,9 @@ function AddCompatibleModal({ variant, isOpen, onClose, onCreated }) {
     prefix: "",
     ...(config.hasApiType ? { apiType: "chat" } : {}),
     baseUrl: config.defaultBaseUrl,
+    // Codex client emulation — only shown/used for OpenAI-compatible custom
+    // providers whose upstream restricts access to codex-shaped clients.
+    ...(config.hasApiType ? { simulateCodex: false } : {}),
   });
 
   const [formData, setFormData] = useState(initialFormData);
@@ -71,7 +74,7 @@ function AddCompatibleModal({ variant, isOpen, onClose, onCreated }) {
         body: JSON.stringify({
           name: formData.name,
           prefix: formData.prefix,
-          ...(config.hasApiType ? { apiType: formData.apiType } : {}),
+          ...(config.hasApiType ? { apiType: formData.apiType, simulateCodex: formData.simulateCodex } : {}),
           baseUrl: formData.baseUrl,
           type: config.type,
         }),
@@ -165,6 +168,14 @@ function AddCompatibleModal({ variant, isOpen, onClose, onCreated }) {
           placeholder={config.defaultBaseUrl}
           hint={config.baseUrlHint}
         />
+        {config.hasApiType && (
+          <Toggle
+            checked={formData.simulateCodex}
+            onChange={(checked) => setFormData({ ...formData, simulateCodex: checked })}
+            label="模拟 codex 客户端"
+            description="部分第三方站点只接受 codex 客户端。开启后，出站请求会携带 codex CLI 的身份头（originator / User-Agent / session_id / ChatGPT-Account-ID），让这类站点放行。仅注入请求头，不影响 token 与上游地址。"
+          />
+        )}
         <Input
           label="API Key (for Check)"
           type="password"

@@ -2,7 +2,7 @@
 
 import { useState, useEffect } from "react";
 import PropTypes from "prop-types";
-import { Button, Badge, Input, Modal, Select } from "@/shared/components";
+import { Button, Badge, Input, Modal, Select, Toggle } from "@/shared/components";
 
 export default function EditCompatibleNodeModal({ isOpen, node, onSave, onClose, isAnthropic }) {
   const [formData, setFormData] = useState({
@@ -10,6 +10,7 @@ export default function EditCompatibleNodeModal({ isOpen, node, onSave, onClose,
     prefix: "",
     apiType: "chat",
     baseUrl: "https://api.openai.com/v1",
+    simulateCodex: false,
   });
   const [saving, setSaving] = useState(false);
   const [checkKey, setCheckKey] = useState("");
@@ -24,6 +25,7 @@ export default function EditCompatibleNodeModal({ isOpen, node, onSave, onClose,
         prefix: node.prefix || "",
         apiType: node.apiType || "chat",
         baseUrl: node.baseUrl || (isAnthropic ? "https://api.anthropic.com/v1" : "https://api.openai.com/v1"),
+        simulateCodex: node.simulateCodex === true,
       });
     }
   }, [node, isAnthropic]);
@@ -44,6 +46,7 @@ export default function EditCompatibleNodeModal({ isOpen, node, onSave, onClose,
       };
       if (!isAnthropic) {
         payload.apiType = formData.apiType;
+        payload.simulateCodex = formData.simulateCodex;
       }
       await onSave(payload);
     } finally {
@@ -107,6 +110,14 @@ export default function EditCompatibleNodeModal({ isOpen, node, onSave, onClose,
           placeholder={isAnthropic ? "https://api.anthropic.com/v1" : "https://api.openai.com/v1"}
           hint={`Use the base URL (ending in /v1) for your ${isAnthropic ? "Anthropic" : "OpenAI"}-compatible API.`}
         />
+        {!isAnthropic && (
+          <Toggle
+            checked={formData.simulateCodex}
+            onChange={(checked) => setFormData({ ...formData, simulateCodex: checked })}
+            label="模拟 codex 客户端"
+            description="部分第三方站点只接受 codex 客户端。开启后，出站请求会携带 codex CLI 的身份头（originator / User-Agent / session_id / ChatGPT-Account-ID），让这类站点放行。仅注入请求头，不影响 token 与上游地址。"
+          />
+        )}
         <div className="flex gap-2">
           <Input
             label="API Key (for Check)"
@@ -154,6 +165,7 @@ EditCompatibleNodeModal.propTypes = {
     prefix: PropTypes.string,
     apiType: PropTypes.string,
     baseUrl: PropTypes.string,
+    simulateCodex: PropTypes.bool,
   }),
   onSave: PropTypes.func.isRequired,
   onClose: PropTypes.func.isRequired,

@@ -7,6 +7,7 @@ import { getCachedClaudeHeaders } from "../utils/claudeHeaderCache.js";
 import { proxyAwareFetch } from "../utils/proxyFetch.js";
 import { injectReasoningContent } from "../utils/reasoningContentInjector.js";
 import { stripUnsupportedParams } from "../translator/concerns/paramSupport.js";
+import { applyCodexFacadeHeaders } from "../shared/codexFacade.js";
 
 // Auth header descriptors — derived from registry transport.auth, fallback to hardcoded defaults.
 const BEARER = { combined: true, header: "Authorization", scheme: "bearer" };
@@ -200,6 +201,17 @@ export class DefaultExecutor extends BaseExecutor {
           }
         }
       }
+    }
+
+    // Codex client emulation for OpenAI-compatible Custom Providers: some
+    // third-party gateways only accept requests that look like the official
+    // codex CLI. When the node-level `simulateCodex` flag is on (propagated onto
+    // the connection's providerSpecificData), inject the same identity headers
+    // CodexExecutor uses, so these gateways let the request through. Token stays
+    // the plain API key the user configured — this is header-only masquerade.
+    if (this.provider?.startsWith?.("openai-compatible-")
+        && credentials?.providerSpecificData?.simulateCodex === true) {
+      applyCodexFacadeHeaders(headers, { credentials });
     }
 
     if (stream) headers["Accept"] = "text/event-stream";
