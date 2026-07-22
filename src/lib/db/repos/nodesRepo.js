@@ -62,6 +62,9 @@ export async function createProviderNode(data) {
     prefix: data.prefix,
     apiType: data.apiType,
     baseUrl: data.baseUrl,
+    // Codex client emulation flag for openai-compatible custom providers.
+    // Persisted into the `data` JSON column; read back via rowToNode's spread.
+    simulateCodex: data.simulateCodex === true,
     createdAt: now,
     updatedAt: now,
   };

@@ -166,4 +166,79 @@ describe("compatible provider connections API", () => {
     expectCompatibleConnection(storedConnections[0], ctx.node, { apiType: "chat" });
     expectCompatibleConnection(storedConnections[1], ctx.node, { apiType: "chat" });
   });
+
+  // createProviderNode must persist `simulateCodex` (codex client emulation flag).
+  // Regression guard: it was previously dropped because createProviderNode hand-lists
+  // fields instead of spreading `data`, so the UI toggle silently had no effect.
+  it("persists simulateCodex=true when creating an OpenAI-compatible node", async () => {
+    const ctx = await setupTestContext({
+      id: "openai-compatible-codex-emulation-on",
+      type: "openai-compatible",
+      name: "Codex Emulation On Node",
+      prefix: "ceo",
+      apiType: "responses",
+      baseUrl: "https://codex-restricted.test/v1",
+      simulateCodex: true,
+    });
+    cleanup = ctx.cleanup;
+
+    expect(ctx.node.simulateCodex).toBe(true);
+    // Re-read from DB to confirm round-trip persistence (not just the return value).
+    const { getProviderNodeById } = await import("@/models/index.js");
+    const reread = await getProviderNodeById(ctx.node.id);
+    expect(reread.simulateCodex).toBe(true);
+  });
+
+  it("defaults simulateCodex to false when not provided", async () => {
+    const ctx = await setupTestContext({
+      id: "openai-compatible-codex-emulation-default",
+      type: "openai-compatible",
+      name: "Codex Emulation Default Node",
+      prefix: "ced",
+      apiType: "chat",
+      baseUrl: "https://plain-openai.test/v1",
+    });
+    cleanup = ctx.cleanup;
+
+    expect(ctx.node.simulateCodex).toBe(false);
+  });
+
+  it("persists simulateCodex=false when explicitly false", async () => {
+    const ctx = await setupTestContext({
+      id: "openai-compatible-codex-emulation-off",
+      type: "openai-compatible",
+      name: "Codex Emulation Off Node",
+      prefix: "cof",
+      apiType: "chat",
+      baseUrl: "https://plain-openai.test/v1",
+      simulateCodex: false,
+    });
+    cleanup = ctx.cleanup;
+
+    expect(ctx.node.simulateCodex).toBe(false);
+    const { getProviderNodeById } = await import("@/models/index.js");
+    const reread = await getProviderNodeById(ctx.node.id);
+    expect(reread.simulateCodex).toBe(false);
+  });
+
+  // End-to-end: a node with simulateCodex=true must propagate the flag onto its
+  // connection's providerSpecificData (the value DefaultExecutor.buildHeaders reads).
+  it("propagates simulateCodex onto the connection's providerSpecificData", async () => {
+    const ctx = await setupTestContext({
+      id: "openai-compatible-codex-emulation-propagation",
+      type: "openai-compatible",
+      name: "Codex Emulation Propagation Node",
+      prefix: "cpr",
+      apiType: "responses",
+      baseUrl: "https://codex-restricted.test/v1",
+      simulateCodex: true,
+    });
+    cleanup = ctx.cleanup;
+
+    const response = await ctx.POST(makeRequest(ctx.node.id));
+    expect(response.status).toBe(201);
+    const storedConnections = await ctx.getProviderConnections({ provider: ctx.node.id });
+    expect(storedConnections).toHaveLength(1);
+    expect(storedConnections[0].providerSpecificData.simulateCodex).toBe(true);
+  });
 });
