@@ -1,7 +1,9 @@
 import net from "net";
 
 const INTERNET_CHECK = {
-  host: "1.1.1.1",
+  // 1.1.1.1 is blocked in some regions (e.g. CN). 223.5.5.5 (Alibaba DNS) is
+  // reliably reachable there and also works globally, so use it as primary.
+  host: "223.5.5.5",
   port: 443,
   timeoutMs: 3000,
 };
