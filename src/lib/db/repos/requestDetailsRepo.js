@@ -29,10 +29,15 @@ async function getObservabilityConfig() {
       return cachedConfig;
     }
     const envFallback = process.env.OBSERVABILITY_ENABLED !== "false";
-    const uiFlag = typeof settings.enableObservability === "boolean";
-    const enabled = uiFlag
-      ? settings.enableObservability
-      : envFallback;
+    // settingsRepo merges DEFAULT_SETTINGS (enableObservability: false) into every
+    // read, so `settings.enableObservability` is ALWAYS a boolean even when the
+    // user never touched the setting. Using it as `uiFlag` would permanently
+    // disable request logging. Only trust the UI value when the raw DB row
+    // actually contains the key.
+    const { readRaw } = await import("./settingsRepo.js");
+    const rawSettings = await readRaw();
+    const hasUiFlag = rawSettings && typeof rawSettings.enableObservability === "boolean";
+    const enabled = hasUiFlag ? rawSettings.enableObservability : envFallback;
 
     cachedConfig = {
       enabled,
