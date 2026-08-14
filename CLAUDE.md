@@ -2,6 +2,32 @@
 
 This file provides guidance to Claude Code (claude.ai/code) when working with code in this repository.
 
+> ## ⚠️ FORK-SPECIFIC RULES — READ FIRST (before ANY git operation)
+>
+> This repo is a **fork of `decolua/9router`** with custom changes. Full details in `FORK.md` — read it before branching, merging, syncing upstream, or pushing. Summary:
+>
+> **Branch strategy:**
+> | Branch | Purpose | Rule |
+> |--------|---------|------|
+> | `master` | Pristine mirror of upstream `decolua/9router:master` | NEVER commit custom changes here |
+> | `mine` | Main work branch = latest upstream + custom changes | Default branch for all work |
+> | `feat/codex-client-emulation` | Feature dev branch for the codex emulation | Rebase onto new baseline when resuming |
+>
+> **Upstream sync flow** (when decolua/9router releases a new version):
+> 1. `git checkout master && git pull` (tracks `upstream/master`) && `git push origin master`
+> 2. `git checkout mine && git merge master` && resolve conflicts && `git push origin mine`
+> 3. Verify: `cd tests && npx vitest run unit/codex-facade.test.js unit/compatible-provider-connections.test.js`
+>
+> **Custom feature: `simulateCodex`** — this fork adds a per-node toggle that injects Codex CLI identity headers into outbound requests for OpenAI-compatible custom providers (needed for client-restricted 公益站点). Key files:
+> - `open-sse/shared/codexFacade.js` (core, NEW in fork)
+> - `open-sse/executors/default.js` (header injection when `simulateCodex === true`)
+> - `open-sse/executors/codex.js` (refactored to reuse codexFacade)
+> - `src/app/api/provider-nodes/route.js` + `[id]/route.js` (persistence)
+> - `src/lib/db/repos/nodesRepo.js` (field read)
+> - `EditCompatibleNodeModal.js` / `AddCompatibleModal.js` (UI toggle)
+>
+> **Conflict watch on upstream merge:** if upstream touched any file above, review the merge by hand — do not auto-accept either side.
+
 ## What this is
 
 9Router (`9router-app`) — a local AI routing gateway + Next.js dashboard. It exposes one OpenAI-compatible endpoint (`/v1/*`) and routes traffic across 40+ upstream providers with format translation, model-combo fallback, multi-account fallback, OAuth/API-key credential management, token refresh, quota/usage tracking, and optional cloud sync.
