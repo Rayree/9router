@@ -782,6 +782,16 @@
     },
     "format": "openai"
   },
+  "qoder-cn": {
+    "baseUrl": "https://gateway.qoder.com.cn/api/v2/service/pro/sse/agent_chat_generation",
+    "headers": {},
+    "timeoutMs": 120000,
+    "stallTimeoutMs": 120000,
+    "usage": {
+      "url": "https://openapi.qoder.com.cn/api/v2/quota/usage"
+    },
+    "format": "openai"
+  },
   "siliconflow": {
     "baseUrl": "https://api.siliconflow.com/v1/chat/completions",
     "validateUrl": "https://api.siliconflow.com/v1/models",
