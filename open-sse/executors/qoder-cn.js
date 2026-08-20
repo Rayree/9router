@@ -1,12 +1,12 @@
 /**
  * QoderCnExecutor — sends OpenAI-format chat requests to Qoder CN's COSY-signed
- * inference endpoint at qoder.cn, then unwraps Qoder's `{statusCodeValue,
- * body}` SSE envelope back into plain OpenAI SSE for the rest of the pipeline.
+ * inference endpoint at openapi.qoder.com.cn, then unwraps Qoder's
+ * `{statusCodeValue, body}` SSE envelope back into plain OpenAI SSE.
  *
- * Key differences from international QoderExecutor:
- *   - Uses qoder.cn domain with /api path prefix instead of qoder.sh subdomains
- *   - All API calls go to qoder.cn/api/v1/... or qoder.cn/api/v2/...
- *   - No api2/api3 subdomain distinction for dt- vs jt- tokens
+ * Verified against the official Qoder CLI CN (v1.1.25) binary:
+ *   - API base: openapi.qoder.com.cn (NOT qoder.cn)
+ *   - All API calls go to openapi.qoder.com.cn/api/v1/... or /api/v2/...
+ *   - No api2/api3 subdomain distinction like the international version
  *   - Same COSY signing, same request shape, same SSE unwrapping
  */
 
@@ -24,6 +24,12 @@ import {
   QODER_CN_CHAT_URL_ENCODED,
   QODER_CN_CHAT_SIG_PATH,
   QODER_CN_MODEL_MAP,
+  QODER_CN_IDE_VERSION,
+  QODER_CN_CLIENT_TYPE,
+  QODER_CN_DATA_POLICY,
+  QODER_CN_LOGIN_VERSION,
+  QODER_CN_MACHINE_OS,
+  QODER_CN_MACHINE_TYPE,
 } from "../shared/qoder-cn/constants.js";
 import { getQoderCnModelConfig, resolveQoderCnModels, isQoderCnPat, resolveQoderCnCredentials } from "../services/qoderModelsCn.js";
 
@@ -335,8 +341,8 @@ export class QoderCnExecutor extends BaseExecutor {
   }
 
   buildUrl(credentials) {
-    // Qoder CN uses a single domain (qoder.cn) for all API calls.
-    // No api2/api3 subdomain distinction like the international version.
+    // Qoder CN serves inference from gateway.qoder.com.cn (auth/account live
+    // on openapi.qoder.com.cn). Chat is COSY-signed with an encoded body.
     return QODER_CN_CHAT_URL_ENCODED;
   }
 
@@ -411,6 +417,14 @@ export class QoderCnExecutor extends BaseExecutor {
           name: credentials.displayName || "",
           email: credentials.email || "",
           machineId: psd.machineId || "",
+          // CN service requires the CLI CN fingerprint, not the
+          // international COSY values.
+          cosyVersion: QODER_CN_IDE_VERSION,
+          clientType: QODER_CN_CLIENT_TYPE,
+          dataPolicy: QODER_CN_DATA_POLICY,
+          loginVersion: QODER_CN_LOGIN_VERSION,
+          machineOs: QODER_CN_MACHINE_OS,
+          machineType: QODER_CN_MACHINE_TYPE,
         },
       );
     } catch (err) {

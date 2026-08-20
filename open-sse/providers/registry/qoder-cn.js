@@ -1,11 +1,13 @@
 /**
  * Qoder CN (国内版) registry entry.
- * Based on the international Qoder provider but pointing to qoder.cn endpoints.
  *
- * Key differences from international version:
- * - Uses qoder.cn domain with /api path prefix instead of qoder.sh subdomains
- * - OAuth login at qoder.cn/device/selectAccounts
- * - API endpoints at qoder.cn/api/v1/... and qoder.cn/api/v2/...
+ * Verified against the official Qoder CLI CN (v1.1.25) binary:
+ *   - Auth/account domain: openapi.qoder.com.cn (NOT qoder.cn)
+ *   - Inference domain: gateway.qoder.com.cn
+ *   - Web UI (PAT creation): qoder.cn/account/integrations
+ *   - NO device-code OAuth flow (CN auth = PAT only)
+ *   - Auth is PAT-only: user creates a Personal Access Token (pt-...) at
+ *     https://qoder.cn/account/integrations and pastes it as an API key
  */
 
 export default {
@@ -20,19 +22,20 @@ export default {
     website: "https://qoder.cn",
     notice: {
       signupUrl: "https://qoder.cn",
+      apiKeyUrl: "https://qoder.cn/account/integrations",
     },
   },
-  category: "oauth",
-  authModes: ["oauth", "apikey"],
-  hasOAuth: true,
+  category: "apikey",
+  authType: "apikey",
+  authModes: ["apikey"],
   authHint: "Personal Access Token (pt-...) 从 https://qoder.cn/account/integrations 获取",
   transport: {
-    baseUrl: "https://qoder.cn/api/v2/service/pro/sse/agent_chat_generation",
+    baseUrl: "https://gateway.qoder.com.cn/api/v2/service/pro/sse/agent_chat_generation",
     headers: {},
     timeoutMs: 120000,
     stallTimeoutMs: 120000,
     usage: {
-      url: "https://qoder.cn/api/v2/quota/usage",
+      url: "https://openapi.qoder.com.cn/api/v2/quota/usage",
     },
   },
   models: [
@@ -50,18 +53,8 @@ export default {
     { id: "dfmodel", name: "DeepSeek-V4-Flash" },
     { id: "mmodel", name: "MiniMax-M3" },
   ],
-  oauth: {
-    openApiBaseUrl: "https://qoder.cn",
-    centerBaseUrl: "https://qoder.cn",
-    chatBaseUrl: "https://qoder.cn",
-    deviceTokenUrl: "https://qoder.cn/api/v1/deviceToken/poll",
-    refreshUrl: "https://qoder.cn/api/v3/user/refresh_token",
-    userInfoUrl: "https://qoder.cn/api/v1/userinfo",
-    quotaUsageUrl: "https://qoder.cn/api/v2/quota/usage",
-    loginUrl: "https://qoder.cn/device/selectAccounts",
-  },
   features: {
     usage: true,
-    usageApikey: true,
+    usageApikey: true
   },
 };

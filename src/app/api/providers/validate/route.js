@@ -5,6 +5,7 @@ import { getDefaultModel } from "open-sse/config/providerModels.js";
 import { resolveOllamaLocalHost, resolveXiaomiTokenplanBaseUrl, PROVIDERS } from "open-sse/config/providers.js";
 import { openaiToCommandCodeRequest } from "open-sse/translator/request/openai-to-commandcode.js";
 import { resolveQoderCredentials, resolveQoderModels } from "open-sse/services/qoderModels.js";
+import { resolveQoderCnCredentials, resolveQoderCnModels } from "open-sse/services/qoderModelsCn.js";
 import { normalizeProviderId } from "@/lib/providerNormalization";
 
 // Probe a webSearch/webFetch provider using its searchConfig/fetchConfig.
@@ -588,6 +589,24 @@ export async function POST(request) {
           try {
             const resolved = await resolveQoderCredentials({ apiKey, providerSpecificData }, null, AbortSignal.timeout(8000));
             const result = await resolveQoderModels(resolved, { forceRefresh: true });
+            isValid = !!result?.models?.length;
+          } catch (err) {
+            isValid = false;
+            error = err.message;
+          }
+          break;
+        }
+
+        case "qoder-cn": {
+          // Qoder CN PATs use the dedicated CN job-token exchange before
+          // model-catalog requests can be COSY-signed.
+          try {
+            const resolved = await resolveQoderCnCredentials(
+              { apiKey, providerSpecificData },
+              null,
+              AbortSignal.timeout(8000),
+            );
+            const result = await resolveQoderCnModels(resolved, { forceRefresh: true });
             isValid = !!result?.models?.length;
           } catch (err) {
             isValid = false;

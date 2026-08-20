@@ -15,6 +15,7 @@ import { getGrokCliUsage } from "./usage/grok-cli.js";
 import { getKimiUsage } from "./usage/kimi.js";
 import { getDeepseekUsage } from "./usage/deepseek.js";
 import { resolveQoderCredentials } from "./qoderModels.js";
+import { resolveQoderCnCredentials } from "./qoderModelsCn.js";
 import {
   getIflowUsage,
   getOllamaUsage,
@@ -41,6 +42,11 @@ const USAGE_HANDLERS = {
     // quota endpoint accepts them.
     const resolved = await resolveQoderCredentials(c, c.proxyOptions).catch(() => null);
     return getQoderUsage(resolved?.accessToken || c.accessToken, c.proxyOptions);
+  },
+  "qoder-cn": async (c) => {
+    // Same flow as qoder, but against openapi.qoder.com.cn.
+    const resolved = await resolveQoderCnCredentials(c, c.proxyOptions).catch(() => null);
+    return getQoderUsage(resolved?.accessToken || c.accessToken, c.proxyOptions, "qoder-cn");
   },
   iflow: (c) => getIflowUsage(c.accessToken),
   ollama: (c) => getOllamaUsage(c.apiKey, c.providerSpecificData, c.proxyOptions),

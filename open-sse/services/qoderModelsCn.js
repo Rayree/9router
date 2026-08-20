@@ -1,18 +1,17 @@
 /**
  * Qoder CN (国内版) model catalog fetcher.
  *
- * Calls /api/v2/model/list (COSY-signed) on qoder.cn to get the live catalog
- * for an authenticated Qoder CN account, then caches the per-model
- * `model_config` blocks by key. Chat requests later look up the exact
- * server-published metadata for the model they want — Qoder's chat endpoint
- * silently downgrades to a different model when the wrong model_config is sent.
- *
- * On any error the live cache stays empty and chatExecuteCall surfaces the
- * problem to the user as "model config not yet fetched, retry shortly".
+ * Verified against the official Qoder CLI CN (v1.1.25) binary:
+ *   - Auth/account domain: openapi.qoder.com.cn (NOT qoder.cn)
+ *   - Inference domain: gateway.qoder.com.cn
+ *   - PAT exchange: POST /api/v1/jobToken/exchange with { personal_token }
+ *   - Response: { token: "jt-...", refresh_token, expires_in (ms) }
+ *   - Model list: GET /api/v2/model/list?Encode=1 (COSY-signed empty body),
+ *     response grouped by scene key (assistant)
  *
  * PAT (Personal Access Token, pt-...) connections: a PAT cannot sign COSY
  * requests directly, so we exchange it for a short-lived job token (jt-...)
- * via qoder.cn/api/v1/jobToken/exchange (plain JSON POST), then use
+ * via openapi.qoder.com.cn/api/v1/jobToken/exchange (plain JSON POST), then use
  * that job token for signing.
  */
 
@@ -24,9 +23,25 @@ import {
   QODER_CN_MODEL_LIST_URL,
   QODER_CN_JOB_TOKEN_EXCHANGE_URL,
   QODER_CN_USERINFO_URL,
+  QODER_CN_SCENE,
   QODER_CN_IDE_VERSION,
   QODER_CN_CLIENT_TYPE,
+  QODER_CN_DATA_POLICY,
+  QODER_CN_LOGIN_VERSION,
+  QODER_CN_MACHINE_OS,
+  QODER_CN_MACHINE_TYPE,
 } from "../shared/qoder-cn/constants.js";
+
+// CN-specific COSY header overrides — the CN service requires the CLI CN
+// fingerprint (version 1.1.25, aarch64_darwin), not the international values.
+const QODER_CN_COSY_OVERRIDES = {
+  cosyVersion: QODER_CN_IDE_VERSION,
+  clientType: QODER_CN_CLIENT_TYPE,
+  dataPolicy: QODER_CN_DATA_POLICY,
+  loginVersion: QODER_CN_LOGIN_VERSION,
+  machineOs: QODER_CN_MACHINE_OS,
+  machineType: QODER_CN_MACHINE_TYPE,
+};
 
 const FETCH_TIMEOUT_MS = 15_000;
 const CACHE_TTL_MS = 60 * 60 * 1000; // 1h, same as the Kiro catalog
@@ -74,6 +89,9 @@ function peekCatalog(credentials) {
 /**
  * Exchange a PAT for a short-lived job token. The result is cached per-PAT
  * and refreshed when within 5 minutes of expiry.
+ *
+ * CN version uses `personal_token` (not `token`) as the request body field,
+ * and the response contains `expires_in` in milliseconds (not seconds).
  */
 async function exchangePatForJobToken(pat, proxyOptions, signal) {
   const cached = patJobCache.get(pat);
@@ -88,8 +106,11 @@ async function exchangePatForJobToken(pat, proxyOptions, signal) {
       headers: {
         "Content-Type": "application/json",
         Accept: "application/json",
+        "User-Agent": "qodercli/1.0.0",
+        "Cosy-Version": QODER_CN_IDE_VERSION,
+        "Cosy-ClientType": QODER_CN_CLIENT_TYPE,
       },
-      body: JSON.stringify({ token: pat }),
+      body: JSON.stringify({ personal_token: pat }),
       signal,
     },
     proxyOptions,
@@ -101,17 +122,54 @@ async function exchangePatForJobToken(pat, proxyOptions, signal) {
   }
 
   const body = await response.json();
-  if (!body.token || !body.user_id) {
-    throw new Error("qoder-cn PAT exchange: missing token or user_id in response");
+  // CN response: { token: "jt-...", refresh_token, expires_in (ms), ... }
+  if (!body.token) {
+    throw new Error("qoder-cn PAT exchange: missing job token in response");
   }
+
+  // expires_in is in milliseconds (86400000 = 24h), not seconds.
+  let expiresAt = Date.now() + PAT_DEFAULT_TTL_MS;
+  if (typeof body.expires_in === "number" && body.expires_in > 0) {
+    expiresAt = Date.now() + body.expires_in;
+  }
+
+  // Fetch userId via userinfo (needed for COSY signing).
+  const userId = await fetchUserIdForJobToken(body.token, proxyOptions, signal);
 
   const entry = {
     accessToken: body.token,
-    userId: body.user_id,
-    expiresAt: Date.now() + (body.expires_in ? body.expires_in * 1000 : PAT_DEFAULT_TTL_MS),
+    userId,
+    expiresAt,
   };
   patJobCache.set(pat, entry);
   return entry;
+}
+
+/**
+ * Resolve the Qoder CN userId for a job token (needed for COSY signing).
+ * Returns "" on any failure — callers fall back to the stored userId.
+ */
+async function fetchUserIdForJobToken(jobToken, proxyOptions, signal) {
+  try {
+    const res = await proxyAwareFetch(
+      QODER_CN_USERINFO_URL,
+      {
+        method: "GET",
+        headers: {
+          Authorization: "Bearer " + jobToken,
+          Accept: "application/json",
+          "User-Agent": "qodercli/1.0.0",
+        },
+        signal,
+      },
+      proxyOptions,
+    );
+    if (!res.ok) return "";
+    const data = await res.json().catch(() => ({}));
+    return data.id || data.userId || data.user_id || "";
+  } catch {
+    return "";
+  }
 }
 
 /**
@@ -137,19 +195,19 @@ export async function resolveQoderCnCredentials(credentials, proxyOptions, signa
 /**
  * Fetch the live model catalog from Qoder CN. Returns null on any error so
  * callers can surface "not yet known" and retry.
+ *
+ * Verified from the official CLI CN binary (v1.1.25): this is a GET (not
+ * POST) against `?Encode=1` on the gateway domain, COSY-signed with an
+ * empty body. The response is grouped by scene (DEFAULT_SCENE = "assistant").
  */
 async function fetchCatalog(credentials, proxyOptions, signal) {
   const psd = credentials.providerSpecificData || {};
   if (!psd.userId || !credentials.accessToken) return null;
 
-  const emptyBody = Buffer.from("{}", "utf8");
-  const encodedBodyStr = qoderEncodeBody(emptyBody);
-  const encodedBodyBuf = Buffer.from(encodedBodyStr, "latin1");
-
   let cosyHeaders;
   try {
     cosyHeaders = buildCosyHeaders(
-      encodedBodyBuf,
+      Buffer.alloc(0),
       QODER_CN_MODEL_LIST_URL,
       {
         userId: psd.userId,
@@ -157,6 +215,7 @@ async function fetchCatalog(credentials, proxyOptions, signal) {
         name: credentials.displayName || "",
         email: credentials.email || "",
         machineId: psd.machineId || "",
+        ...QODER_CN_COSY_OVERRIDES,
       },
     );
   } catch {
@@ -164,9 +223,9 @@ async function fetchCatalog(credentials, proxyOptions, signal) {
   }
 
   const headers = {
-    "Content-Type": "application/json",
     Accept: "application/json",
     "Accept-Encoding": "identity",
+    "User-Agent": "qodercli/1.0.0",
     ...cosyHeaders,
   };
 
@@ -178,8 +237,8 @@ async function fetchCatalog(credentials, proxyOptions, signal) {
   let response;
   try {
     response = await proxyAwareFetch(
-      QODER_CN_MODEL_LIST_URL,
-      { method: "POST", headers, body: encodedBodyBuf, signal: mergedSignal },
+      `${QODER_CN_MODEL_LIST_URL}?Encode=1`,
+      { method: "GET", headers, signal: mergedSignal },
       proxyOptions,
     );
   } finally {
@@ -192,12 +251,32 @@ async function fetchCatalog(credentials, proxyOptions, signal) {
   let body;
   try { body = JSON.parse(text); } catch { return null; }
 
-  const models = Array.isArray(body?.data) ? body.data : [];
+  // Response is grouped by scene: body[scene] is the model array.
+  const sceneModels = (body && typeof body === "object" && !Array.isArray(body))
+    ? (body[QODER_CN_SCENE] || body.assistant || body.default || [])
+    : Array.isArray(body)
+      ? body
+      : [];
+
+  const models = [];
   const rawConfigs = new Map();
-  for (const m of models) {
-    if (m && typeof m === "object" && m.key) {
-      rawConfigs.set(m.key, m);
-    }
+  for (const m of sceneModels) {
+    if (!m || typeof m !== "object") continue;
+    const key = m.key;
+    if (!key) continue;
+    // Always cache the config — chat needs model_config even for UI-hidden
+    // models (enable:false). Upstream still accepts chat for these keys.
+    rawConfigs.set(key, m);
+    if (m.enable === false) continue;
+    models.push({
+      id: key,
+      name: m.display_name || key,
+      contextLength: Number(m.max_input_tokens) || 131_072,
+      isVL: !!m.is_vl,
+      isReasoning: !!m.is_reasoning,
+      maxOutputTokens: Number(m.max_output_tokens) || 0,
+      description: m.description || "",
+    });
   }
 
   return {
@@ -264,8 +343,9 @@ export async function fetchQoderCnUserInfo(accessToken, proxyOptions, signal) {
       {
         method: "GET",
         headers: {
-          Authorization: `Bearer ${accessToken}`,
+          Authorization: "Bearer " + accessToken,
           Accept: "application/json",
+          "User-Agent": "qodercli/1.0.0",
         },
         signal,
       },
