@@ -69,19 +69,18 @@ export const QODER_CN_LOGIN_VERSION = "v2";
 export const QODER_CN_MACHINE_OS = "aarch64_darwin";
 export const QODER_CN_MACHINE_TYPE = "5";
 
-// Canonical model identifiers. Same as international version.
+// Canonical model identifiers. Verified against live /algo/api/v2/model/list on 2026-08-28.
 export const QODER_CN_MODEL_MAP = {
-  // Tier models
   auto: "auto",
-  ultimate: "ultimate",
-  performance: "performance",
-  efficient: "efficient",
-  lite: "lite",
-  // Frontier models
-  qmodel: "qmodel",
+  qmodel_38max: "qmodel_38max",
+  qfmodel: "qfmodel",
   qmodel_latest: "qmodel_latest",
+  qmodel: "qmodel",
+  q37fmodel: "q37fmodel",
   dmodel: "dmodel",
   dfmodel: "dfmodel",
+  gmodel: "gmodel",
+  gfmodel: "gfmodel",
   gm51model: "gm51model",
   kmodel: "kmodel",
   mmodel: "mmodel",
