@@ -89,3 +89,80 @@ npx vitest run unit/compatible-provider-connections.test.js
 ## 本地开发
 
 参考上游 [README.md](./README.md) 和 [CLAUDE.md](./CLAUDE.md)。
+
+---
+
+## Qoder CN 提供商（2026-08-28 新增）
+
+为本 fork 加入 `qoder-cn`（alias `qdcn`）提供商，对接 Qoder 国内版
+（`qoder.cn`，独立运营，与国际版 `qoder.sh` 完全分离的 endpoint 体系）。
+
+### 关键文件
+
+| 状态 | 文件 | 说明 |
+|------|------|------|
+| **新增** | `open-sse/executors/qoder-cn.js` | PAT → job token 交换 + COSY 签名 + SSE 转发 |
+| **新增** | `open-sse/providers/registry/qoder-cn.js` | 提供商注册（13 模型，UI 配置） |
+| **新增** | `open-sse/services/qoderModelsCn.js` | PAT 交换 + 动态 catalog 拉取 + 缓存 |
+| **新增** | `open-sse/shared/qoder-cn/constants.js` | endpoint / COSY 指纹常量 |
+| 修改 | `open-sse/providers/registry/index.js` | 自动重新生成（`scripts/migrate-registry.mjs`） |
+| 修改 | `src/app/(dashboard)/dashboard/providers/[id]/AddApiKeyModal.js` | UI 接受 `pt-...` PAT |
+| 修改 | `src/app/api/providers/validate/route.js` | 测试连接走 qoder-cn executor |
+| 修改 | `src/app/api/v1/models/route.js` | qdcn/* 模型列入 `/v1/models` |
+| 修改 | `src/app/(dashboard)/dashboard/usage/components/ProviderLimits/utils.js` | 配额卡片显示 |
+| 修改 | `public/i18n/literals/zh-CN.json` 等 | 多语言标签 |
+| 修改 | `tests/__baseline__/providers-baseline.json` / `alias-baseline.json` | 基线快照（82 providers / 117 aliases） |
+| 修改 | `tests/translator/__snapshots__/golden-url-header.test.js.snap` | url/header 黄金快照 |
+
+### 接入流程（一次性）
+
+1. 用户去 `https://qoder.cn/account/integrations` 创建 PAT（`pt-...`）。
+2. Dashboard → 提供商 → Qoder CN → 添加连接 → 粘 PAT。
+3. 首次调用任一 `qdcn/*` 模型时，executor 自动：
+   - PAT 换 24h job token（`jt-...`）
+   - userinfo 拉 userId
+   - COSY 签名 GET `/algo/api/v2/model/list?Encode=1` 拉模型目录（1h 缓存）
+4. 之后的 chat 调用走 `/algo/api/v2/service/pro/sse/agent_chat_generation`，COSY 签名 + SSE 转发。
+
+### 踩坑与排查要点
+
+1. **endpoint 必须带 `/algo` 前缀**（2026-08-28 实测）：
+   - ❌ `gateway.qoder.com.cn/api/v2/model/list` → ALB 边缘直接 503，不到应用层
+   - ✅ `gateway.qoder.com.cn/algo/api/v2/model/list` → 200
+   - 参考国际版： `api3.qoder.sh/algo/api/v2/model/list`（`/algo` 是 qoder 的固定 prefix）
+   - chat SSE 同理： `/algo/api/v2/service/pro/sse/agent_chat_generation`
+
+2. **不要凭猜写模型列表**。初版 registry 复制了国际版的
+   `ultimate/performance/efficient/lite/qmodel_preview/kmodel_latest` 等，
+   但 CN 站真实 catalog 完全不同。校准方法：用 PAT 跑一次
+   `resolveQoderCnModels(..., { forceRefresh: true })` 拿到 rawConfigs
+   的真实 key + display_name 后再写 registry。当前真实列表（13 个）：
+   `auto, qmodel_38max, qfmodel, qmodel_latest, qmodel, q37fmodel, dmodel, dfmodel, gmodel, gfmodel, gm51model, kmodel, mmodel`。
+
+3. **CN 与国际版的差异**：
+   - 认证域 `openapi.qoder.com.cn`，推理域 `gateway.qoder.com.cn`（国际版单 host 多 subdomain）
+   - CN 认证只支持 PAT，**没有 device-code OAuth**
+   - CN 模型列表是 GET 带 `?Encode=1`，响应按 scene 分组（取 `body.assistant`），国际版是 POST + `body.chat`
+   - CN 的 COSY 指纹必须是 CLI CN `1.1.25` + `aarch64_darwin` + clientType `5`（不能用国际版的 IDE 指纹）
+   - PAT 换 job token 的 body 是 `{ personal_token: pt-... }`（不是 `{ token }`），`expires_in` 单位是**毫秒**
+
+4. **`cli:pack` 之后必须验证 tarball 内容**：
+   - size 一致 ≠ 内容一致（webpack chunk 重新哈希后大小可能差不多）
+   - 验证： `tar -xzf 9router-*.tgz -C /tmp/x && grep -rl "qoder-cn\|qmodel_38max" /tmp/x/package/app/.next-cli-build/server/`
+   - 如果关键字符串没进 tarball，先 `rm -rf cli/app` 再重跑 `npm run cli:pack`
+
+5. **Google Fonts 构建被墙**：
+   - 症状： `next build` 在 `src/app/layout.js` 的 `next/font/google` 卡死
+   - 临时改： 把 `Inter({...})` 替换成 `const inter = { variable: "font-sans" }` 并注释 import
+   - 构建完成后**必须还原**，否则后续 dev 模式字体不对
+
+### 端到端验证记录（2026-08-28）
+
+- PAT 创建 / 撤销 / 列出： ✅ Web UI 正常工作
+- PAT → job token 交换： ✅ 返回 `jt-...` 24h 有效
+- userinfo: ✅ 返回 userId `01a014d3-...`
+- 模型 catalog 拉取： ✅ 13 个模型完整返回（61KB JSON）
+- 13/13 模型 chat 调用： ✅ 全部返回正常 completion
+- Streaming (SSE)： ✅ chunk 正常 + `[DONE]` 收尾
+- 配额： 300 credits 专业试用版
+- reasoning 模型（auto/qmodel/dmodel/gmodel/gm51model/kmodel）返回里有 `reasoning_content` 字段，使用 `max_tokens` 太小会全花在思考上导致 `content=""` —— 给 200+ tokens 即可
