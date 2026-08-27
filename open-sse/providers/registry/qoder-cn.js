@@ -30,7 +30,7 @@ export default {
   authModes: ["apikey"],
   authHint: "Personal Access Token (pt-...) 从 https://qoder.cn/account/integrations 获取",
   transport: {
-    baseUrl: "https://gateway.qoder.com.cn/api/v2/service/pro/sse/agent_chat_generation",
+    baseUrl: "https://gateway.qoder.com.cn/algo/api/v2/service/pro/sse/agent_chat_generation",
     headers: {},
     timeoutMs: 120000,
     stallTimeoutMs: 120000,

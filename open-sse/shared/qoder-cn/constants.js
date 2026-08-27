@@ -13,7 +13,7 @@
  * Endpoint set (extracted from the binary's brand constants + request code):
  *   openapi.qoder.com.cn/api/v1/...   PAT exchange, userinfo
  *   openapi.qoder.com.cn/api/v2/...   quota usage
- *   gateway.qoder.com.cn/api/v2/...   model list, chat inference, byok
+ *   gateway.qoder.com.cn/algo/api/v2/...   model list, chat inference, byok
  *
  * CN model list is a GET (not POST) against `?Encode=1`; the response is
  * grouped by scene (DEFAULT_SCENE = "assistant"), not `body.chat` like the
@@ -43,10 +43,10 @@ export const QODER_CN_QUOTA_USAGE_URL = `${QODER_CN_OPENAPI_BASE}/api/v2/quota/u
 // Model list — GET (COSY-signed) on the inference domain. The binary appends
 // `?Encode=1` and decrypts the response via the qoder_auth_wasm module; the
 // response is grouped by scene key (see QODER_CN_SCENE).
-export const QODER_CN_MODEL_LIST_URL = `${QODER_CN_GATEWAY_BASE}/api/v2/model/list`;
+export const QODER_CN_MODEL_LIST_URL = `${QODER_CN_GATEWAY_BASE}/algo/api/v2/model/list`;
 
 // Inference endpoint (POST, COSY-signed, SSE stream).
-export const QODER_CN_CHAT_SIG_PATH = "/api/v2/service/pro/sse/agent_chat_generation";
+export const QODER_CN_CHAT_SIG_PATH = "/algo/api/v2/service/pro/sse/agent_chat_generation";
 export const QODER_CN_CHAT_URL = `${QODER_CN_GATEWAY_BASE}${QODER_CN_CHAT_SIG_PATH}?FetchKeys=llm_model_result&AgentId=agent_common`;
 export const QODER_CN_CHAT_URL_ENCODED = `${QODER_CN_CHAT_URL}&Encode=1`;
 
