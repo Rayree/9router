@@ -8,6 +8,7 @@ import { getModelsByProviderId } from "open-sse/config/providerModels.js";
 import { resolveKiroModels } from "open-sse/services/kiroModels.js";
 import { resolveKimchiModels } from "open-sse/services/kimchiModels.js";
 import { resolveQoderModels } from "open-sse/services/qoderModels.js";
+import { resolveQoderCnModels } from "open-sse/services/qoderModelsCn.js";
 import { resolveGrokCliModels } from "open-sse/services/grokCliModels.js";
 import { resolveConnectionProxyConfig } from "@/lib/network/connectionProxy";
 import { resolveCursorModels } from "open-sse/services/cursorModels.js";
@@ -364,6 +365,42 @@ const PROVIDER_MODELS_CONFIG = {
       } catch (error) {
         warning = `Failed to fetch Qoder models: ${error.message}`;
         console.log("Failed to fetch Qoder models dynamically, falling back to static:", error.message);
+      }
+      return { models: [], warning };
+    },
+  },
+  "qoder-cn": {
+    customResolver: async (connection) => {
+      const credentials = {
+        accessToken: connection.accessToken,
+        apiKey: connection.apiKey,
+        refreshToken: connection.refreshToken,
+        email: connection.email,
+        displayName: connection.displayName,
+        providerSpecificData: connection.providerSpecificData || {},
+      };
+      let warning;
+      try {
+        const result = await resolveQoderCnModels(credentials, { forceRefresh: true });
+        if (result?.models?.length) {
+          return {
+            models: result.models.map((m) => ({
+              // Use the canonical "qdcn/<key>" id so the dashboard
+              // surfaces the same identifier the chat router expects.
+              id: `qdcn/${m.id}`,
+              name: m.name,
+              contextLength: m.contextLength,
+              isVL: m.isVL,
+              isReasoning: m.isReasoning,
+              maxOutputTokens: m.maxOutputTokens,
+              description: m.description,
+            })),
+          };
+        }
+        warning = "Qoder CN returned no models; falling back to static catalog.";
+      } catch (error) {
+        warning = `Failed to fetch Qoder CN models: ${error.message}`;
+        console.log("Failed to fetch Qoder CN models dynamically, falling back to static:", error.message);
       }
       return { models: [], warning };
     },
