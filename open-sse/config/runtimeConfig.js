@@ -58,6 +58,17 @@ export const STREAM_FIRST_CHUNK_TIMEOUT_MS = envMs("STREAM_FIRST_CHUNK_TIMEOUT_M
 // Fetch connect timeout: abort if upstream doesn't return response headers within this duration
 export const FETCH_CONNECT_TIMEOUT_MS = envMs("FETCH_CONNECT_TIMEOUT_MS", 60 * 1000);
 
+// Qoder CN queue-retry policy. When the upstream returns its 10605
+// "service queued / over capacity" SSE error (HTTP layer still 200), the
+// official clients keep re-sending the request until admitted. We mirror
+// that: wait `retryAfterSeconds` between attempts, up to a total budget.
+// Env: QODER_CN_QUEUE_RETRY_MAX_MS (0 disables retry, error passes through).
+export const QODER_CN_QUEUE_RETRY_MAX_MS = envMs("QODER_CN_QUEUE_RETRY_MAX_MS", 5 * 60 * 1000);
+export const QODER_CN_QUEUE_RETRY_MAX_ATTEMPTS = (() => {
+  const raw = parseInt(process.env.QODER_CN_QUEUE_RETRY_MAX_ATTEMPTS || "", 10);
+  return Number.isFinite(raw) && raw >= 0 ? raw : 12;
+})();
+
 // Gemini native TTS fetch timeout: abort if Google does not return response headers in time.
 export const GEMINI_NATIVE_TTS_FETCH_TIMEOUT_MS = envMs("GEMINI_NATIVE_TTS_FETCH_TIMEOUT_MS", 45 * 1000);
 
