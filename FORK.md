@@ -166,3 +166,51 @@ npx vitest run unit/compatible-provider-connections.test.js
 - Streaming (SSE)： ✅ chunk 正常 + `[DONE]` 收尾
 - 配额： 300 credits 专业试用版
 - reasoning 模型（auto/qmodel/dmodel/gmodel/gm51model/kmodel）返回里有 `reasoning_content` 字段，使用 `max_tokens` 太小会全花在思考上导致 `content=""` —— 给 200+ tokens 即可
+
+---
+
+## ZCode / zcode2api 调研结论（2026-08-29，实测后放弃集成）
+
+任务：评估 `liu5269/zcode2api`（把 ZCode Coding Plan 免费额度转成 Anthropic API），
+能否以 OAuth / API Key 提供商形式加入 9router。
+
+**结论：功能当前不可用，未向 9router 添加任何代码。** 证据链（全部本机实测）：
+
+1. **OAuth init 端点活着**：`POST zcode.z.ai/api/v1/oauth/cli/init` 返回 200
+   （flow_id + authorize_url）。但维护更活跃的 `TriDefender/zcode-api` 表明该
+   device/poll 流程已被 auth-code 流程取代（`chat.z.ai/api/oauth/authorize` →
+   `zcode.z.ai/api/v1/oauth/token`，token 响应里带 `data.token` 即 Start Plan JWT）。
+2. **核心依赖「阿里无痕验证」已失效（本项目路线）**：
+   - 验证码配置端点需要 `platform=win32-x64`（项目硬编码 `win32` → 400
+     `parameter error`），且当前 `region` 已改为 `cn`（项目默认 `sgp`）。
+   - 项目的 jsdom 求解器（`captcha_node/solver.js`）实测失败：
+     `verifyResult:false, verifyCode:"F001"`。
+   - 上游已封死 jsdom 路线：TriDefender/zcode-api commit `32d508d`
+     “Completely migrated to Happy solver and removed jsdom dependencies”。
+   - happy-dom 求解器（TriDefender 版）**可以解出**有效 `verifyParam`
+     （~280 chars，含 certifyId + securityToken，1~2s），但**必须在 Bun
+     运行时**（Node 26 下 happy-dom VM 根本不执行脚本）；且偶发
+     pe-VM stall，需要重试池。
+3. **即便拿到「有效 JWT + 有效验证码 + 官方 system 块 + ZCode 身份头」，
+   上游仍整体风控拦截**：
+   - `POST /api/v1/zcode-plan/anthropic/v1/messages` → 405
+     `{"code":3012,"msg":"request has been blocked due to unusual activity."}`
+   - `/billing/current` 等非模型端点同样 3012。
+   - 本机官方 ZCode 桌面端 v3.10.1 当天日志也出现上游拒绝
+     （“official MCP rejected the current credential”），且无成功模型调用
+     → 3012 是账号/设备级风控，不是模拟差异。
+4. **API Key 回退路线不是「免费额度」**：本机账号的 `{apiKey}.{secret}`
+   组合实测 `api.z.ai` 两个端点均返回 1113 “Insufficient balance or no
+   resource package”（无 Coding Plan、PAYG 余额为 0）。
+
+**9router 集成判断**：
+- API Key 形式无意义 —— 9router 已有 `glm` 提供商（`api.z.ai/api/anthropic`，
+  `x-api-key`），就是这条路；1113 是账号权益问题，不是协议问题。
+- OAuth 形式的价值只在 Start Plan 免费额度，但该路线被 3012 风控拦截
+  （验证码只是第一道）。加进提供商列表只会制造「能登录、不能出字」的坑。
+- **若上游日后解封**，集成点已摸清：`registry/zcode.js`（`format: "claude"`，
+  baseUrl `https://zcode.z.ai/api/v1/zcode-plan/anthropic/v1/messages`）+
+  专属 executor（ZCode 身份头 + trace 头 + `X-Aliyun-Captcha-Verify-Param`
+  注入 + 3007/3012 判定重试）+ OAuth service（auth-code 流程，把
+  `data.token` 存为 accessToken）+ Bun 侧独立验证码求解进程。
+  验证脚本留存于 `~/work/hermes/api/zcode-api/test-*.ts`（用 `bun` 运行）。
