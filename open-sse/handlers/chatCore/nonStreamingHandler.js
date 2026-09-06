@@ -139,6 +139,66 @@ function openAICompletionToResponses(responseBody, customToolNames = null) {
 }
 
 /**
+ * Convert a non-streaming Responses API body (object: "response") into an
+ * OpenAI Chat Completions completion. Used when an openai-compatible responses
+ * node answers stream:false but the client speaks chat.
+ */
+function openAIResponsesCompletionToChat(responseBody) {
+  if (!responseBody || !Array.isArray(responseBody.output)) return responseBody;
+
+  let content = "";
+  let reasoning = "";
+  const toolCalls = [];
+  for (const item of responseBody.output) {
+    if (item?.type === "message" || (!item?.type && Array.isArray(item?.content))) {
+      for (const part of item.content || []) {
+        if (typeof part?.text === "string" && (part.type === "output_text" || !part.type)) content += part.text;
+      }
+    } else if (item?.type === "reasoning") {
+      for (const part of item.summary || []) {
+        if (typeof part?.text === "string") reasoning += part.text;
+      }
+    } else if (item?.type === "function_call") {
+      toolCalls.push({
+        id: item.call_id || `call_${item.name}_${toolCalls.length}`,
+        type: "function",
+        function: {
+          name: item.name || "",
+          arguments: typeof item.arguments === "string" ? item.arguments : JSON.stringify(item.arguments || {}),
+        },
+      });
+    }
+  }
+
+  const usage = responseBody.usage || {};
+  const cached = usage.input_tokens_details?.cached_tokens || usage.cache_read_input_tokens || 0;
+  const promptTokens = usage.input_tokens || usage.prompt_tokens || 0;
+  const completionTokens = usage.output_tokens || usage.completion_tokens || 0;
+
+  const message = { role: "assistant", content };
+  if (reasoning) message.reasoning_content = reasoning;
+  if (toolCalls.length > 0) message.tool_calls = toolCalls;
+
+  return {
+    id: String(responseBody.id || "").startsWith("chatcmpl") ? responseBody.id : `chatcmpl-${responseBody.id || Date.now()}`,
+    object: "chat.completion",
+    created: responseBody.created || Math.floor(Date.now() / 1000),
+    model: responseBody.model || "unknown",
+    choices: [{
+      index: 0,
+      message,
+      finish_reason: responseBody.status === "incomplete" ? "length" : "stop",
+    }],
+    usage: {
+      prompt_tokens: promptTokens,
+      completion_tokens: completionTokens,
+      total_tokens: usage.total_tokens || promptTokens + completionTokens,
+      ...(cached > 0 ? { prompt_tokens_details: { cached_tokens: cached } } : {}),
+    },
+  };
+}
+
+/**
  * Translate non-streaming response body from provider format → OpenAI format.
  */
 export function translateNonStreamingResponse(responseBody, targetFormat, sourceFormat, customToolNames = null) {
@@ -147,6 +207,11 @@ export function translateNonStreamingResponse(responseBody, targetFormat, source
   // Responses API — convert so tool_calls/text surface as Responses `output`.
   if (targetFormat === FORMATS.OPENAI && sourceFormat === FORMATS.OPENAI_RESPONSES) {
     return openAICompletionToResponses(responseBody, customToolNames);
+  }
+  // Provider responded in Responses API shape (e.g. an openai-compatible
+  // responses node honoring stream:false) but the client speaks Chat Completions.
+  if (targetFormat === FORMATS.OPENAI_RESPONSES && sourceFormat === FORMATS.OPENAI) {
+    return openAIResponsesCompletionToChat(responseBody);
   }
   if (targetFormat === FORMATS.OPENAI && sourceFormat === FORMATS.CLAUDE) {
     return openAICompletionToClaudeMessage(responseBody);

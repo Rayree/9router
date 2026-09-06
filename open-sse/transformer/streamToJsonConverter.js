@@ -29,6 +29,12 @@ function processSSEMessage(msg, state) {
     state.items.set(parsed.output_index ?? 0, parsed.item);
   } else if (eventType === "response.completed" || eventType === "response.done") {
     state.status = "completed";
+    // Some gateways never emit response.output_item.done and only carry the
+    // full output array on the terminal event — adopt it when per-item events
+    // were missing, otherwise the aggregated response would have empty output.
+    if (state.items.size === 0 && Array.isArray(parsed.response?.output) && parsed.response.output.length > 0) {
+      parsed.response.output.forEach((item, idx) => state.items.set(item.output_index ?? idx, item));
+    }
     if (parsed.response?.usage) {
       state.usage.input_tokens = parsed.response.usage.input_tokens || 0;
       state.usage.output_tokens = parsed.response.usage.output_tokens || 0;

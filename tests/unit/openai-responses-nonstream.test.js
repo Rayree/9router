@@ -146,3 +146,58 @@ describe("forced-SSE JSON path for a Responses-API client behind a chat upstream
     expect(json.choices[0].message.tool_calls[0].function.name).toBe("shell");
   });
 });
+
+describe("non-stream Responses upstream for a Chat client (hiyo empty-content bug)", () => {
+  // A Responses API body as returned by a codex-shaped relay (e.g. free.hiyo.top)
+  // when the compatible-responses node honours the client's stream:false.
+  const RESPONSES_BODY = {
+    id: "chatcmpl_219006cc",
+    object: "response",
+    created: 1788710382,
+    model: "gpt-5.6-luna",
+    output: [{ type: "message", role: "assistant", content: [{ type: "output_text", text: "NS" }] }],
+    usage: {
+      input_tokens: 4391, output_tokens: 5, total_tokens: 4396,
+      input_tokens_details: { cached_tokens: 3840, cache_hit: true }
+    }
+  };
+
+  it("converts Responses output into chat.completion content", () => {
+    const out = translateNonStreamingResponse(RESPONSES_BODY, FORMATS.OPENAI_RESPONSES, FORMATS.OPENAI);
+    expect(out.object).toBe("chat.completion");
+    expect(out.choices[0].message.content).toBe("NS");
+    expect(out.choices[0].finish_reason).toBe("stop");
+  });
+
+  it("surfaces cached tokens and reasoning without dropping content", () => {
+    const body = {
+      ...RESPONSES_BODY,
+      output: [
+        { type: "reasoning", summary: [{ type: "summary_text", text: "thinking" }] },
+        { type: "message", role: "assistant", content: [{ type: "output_text", text: "answer" }] }
+      ]
+    };
+    const out = translateNonStreamingResponse(body, FORMATS.OPENAI_RESPONSES, FORMATS.OPENAI);
+    expect(out.choices[0].message.content).toBe("answer");
+    expect(out.choices[0].message.reasoning_content).toBe("thinking");
+    expect(out.usage.prompt_tokens_details.cached_tokens).toBe(3840);
+  });
+
+  it("maps Responses function_call output to chat tool_calls", () => {
+    const body = {
+      ...RESPONSES_BODY,
+      output: [{ type: "function_call", call_id: "call_1", name: "shell", arguments: "{\"cmd\":\"ls\"}" }]
+    };
+    const out = translateNonStreamingResponse(body, FORMATS.OPENAI_RESPONSES, FORMATS.OPENAI);
+    expect(out.choices[0].message.content).toBe("");
+    expect(out.choices[0].message.tool_calls[0]).toMatchObject({
+      id: "call_1", type: "function", function: { name: "shell", arguments: "{\"cmd\":\"ls\"}" }
+    });
+  });
+
+  it("leaves non-Responses bodies untouched", () => {
+    const out = translateNonStreamingResponse(RESPONSES_BODY, FORMATS.OPENAI, FORMATS.OPENAI);
+    expect(out.object).toBe("response");
+  });
+});
+

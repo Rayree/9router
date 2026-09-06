@@ -214,3 +214,52 @@ npx vitest run unit/compatible-provider-connections.test.js
   注入 + 3007/3012 判定重试）+ OAuth service（auth-code 流程，把
   `data.token` 存为 accessToken）+ Bun 侧独立验证码求解进程。
   验证脚本留存于 `~/work/hermes/api/zcode-api/test-*.ts`（用 `bun` 运行）。
+
+---
+
+## simulateCodex 非流式修复 + hiyo.top 端到端验证（2026-09-07）
+
+开源公益 Codex 中转站 `free.hiyo.top`（Codex 订阅站）实测接入成功。
+该站与 muyuan 同类：`/v1/responses` 校验客户端指纹，非 Codex 客户端
+返回 HTTP 200 但正文是「仅支持 Codex 官方客户端」的拒绝文案（伪装成
+正常回复，非报错）。指纹校验实测规则：**`originator: codex_cli_rs` 或
+codex 系 User-Agent 任一命中即放行**（curl 默认 UA + originator 也过）。
+`simulateCodex` 开关本身工作正常，但暴露出非流式路径两个 bug，已修复。
+
+### 端到端验证记录（2026-09-06/07，站点 key `sk-6bca...748d6`）
+
+| 路径 | 结果 |
+|------|------|
+| `/v1/chat/completions` stream=false | ✅ content 正常 + usage（prompt 含 `prompt_tokens_details.cached_tokens`） |
+| `/v1/chat/completions` stream=true | ✅ 增量 delta 正常 |
+| `/v1/responses` stream=true（透传） | ✅ 全事件流 + usage |
+| `/v1/responses` stream=false（聚合） | ✅ 聚合出 output/usage |
+
+模型：`gpt-5.6-luna`（该 key 仅此一个）；上游延迟 1~60s，间歇性
+Cloudflare 502（站点自身容量问题，与客户端指纹无关）。
+
+### 修复的 bug
+
+| 文件 | 问题 | 修复 |
+|------|------|------|
+| `open-sse/handlers/chatCore.js` | 自定义节点不在 `PROVIDERS`，`PROVIDERS[provider]?.forceStream` 恒为 false；但请求翻译器 `openaiToOpenAIResponsesRequest` **硬编码 `stream: true`**，上游永远回 SSE → 非流式客户端的 Responses SSE 被 `parseSSEToOpenAIResponse`（chat 解析器）错误解析 → 空 content | compatible-responses 节点（`resolveOpenAICompatibleApiType() === "responses"`）与 codex 一致视为强制流式，统一走 forced-SSE 聚合路径 |
+| `open-sse/transformer/streamToJsonConverter.js` | 聚合只认 `response.output_item.done` 事件，但 hiyo 从不发该事件（完整 `output` 只在 `response.completed` 里）→ 聚合结果 `output: []` | `completed` 时若 `items` 为空，采纳 `response.output` 数组 |
+| `open-sse/handlers/chatCore/nonStreamingHandler.js` | `translateNonStreamingResponse` 只有「chat 上游 → responses 客户端」分支，缺反向（responses 上游真回 JSON 时 chat 客户端拿不到 content） | 新增 `openAIResponsesCompletionToChat()`：message/reasoning/function_call → choices[0].message，usage 含 cached_tokens |
+
+回归测试：`tests/unit/openai-responses-nonstream.test.js` 新增 4 个用例
+（hiyo bug describe），连同 `codex-facade` / `compatible-provider-connections`
+共 30/30 通过。
+
+### 踩坑要点
+
+1. **hiyo 的拒绝是「成功响应」形态**：HTTP 200 + `output_text.delta` 里的
+   拒绝文案，9router 会原样透传给客户端——排查「模型说怪话」时先确认
+   站点是否认出了客户端，别只看状态码。
+2. **hiyo 不发 `response.output_item.done`**，聚合器别只依赖逐 item 事件。
+3. **`openaiToOpenAIResponsesRequest` 强制 `stream: true`** 是上游原始设计
+   （codex 后端只收流式）；任何「responses 型上游 + 非流式客户端」的组合
+   都必须走 forced-SSE 聚合，判断条件要跟这个事实对齐（本次 chatCore 修复）。
+4. **接入站点配置**：添加 OpenAI Compatible 节点 → API Type 选
+   Responses API → 开「模拟 codex 客户端」→ baseUrl 填站点根（如
+   `https://free.hiyo.top/v1`）→ 连接填站点 key → 模型用站点 `/v1/models`
+   实际返回的 id。
