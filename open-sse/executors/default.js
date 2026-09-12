@@ -8,6 +8,8 @@ import { proxyAwareFetch } from "../utils/proxyFetch.js";
 import { injectReasoningContent } from "../utils/reasoningContentInjector.js";
 import { stripUnsupportedParams } from "../translator/concerns/paramSupport.js";
 import { applyCodexFacadeHeaders } from "../shared/codexFacade.js";
+import { HTTP_STATUS } from "../config/runtimeConfig.js";
+import { dbg } from "../utils/debugLog.js";
 
 // Auth header descriptors — derived from registry transport.auth, fallback to hardcoded defaults.
 const BEARER = { combined: true, header: "Authorization", scheme: "bearer" };
@@ -66,6 +68,41 @@ const REFRESH_GRANTS = Object.fromEntries(
 export class DefaultExecutor extends BaseExecutor {
   constructor(provider) {
     super(provider, PROVIDERS[provider] || PROVIDERS.openai);
+  }
+
+  // Multi-channel new-api relays sometimes gate "IDE/toolchain" clients on a
+  // subset of their channels (403 ide_request_blocked) while sibling channels
+  // serve the same model fine. Every POST is routed independently, so
+  // transparently replaying the identical request re-rolls the channel
+  // assignment; without this a single gated-channel hit locks the whole
+  // connection behind the 403 cooldown (see errorConfig ERROR_RULES).
+  static IDE_BLOCKED_MARKER = "ide_request_blocked";
+  static IDE_BLOCKED_RETRIES = 2;
+  static IDE_BLOCKED_RETRY_DELAY_MS = 1000;
+
+  async execute(args) {
+    let result = await super.execute(args);
+    if (result.response?.status !== HTTP_STATUS.FORBIDDEN) return result;
+
+    for (let attempt = 0; attempt <= DefaultExecutor.IDE_BLOCKED_RETRIES; attempt++) {
+      // 403 bodies are small JSON errors — safe to buffer and re-wrap.
+      const text = await result.response.text();
+      if (!text.includes(DefaultExecutor.IDE_BLOCKED_MARKER)) {
+        return { ...result, response: DefaultExecutor.rebuildTextResponse(result.response, text) };
+      }
+      dbg("RETRY", `${this.provider.toUpperCase()} | 403 ide_request_blocked (gated channel) — retry ${attempt + 1}/${DefaultExecutor.IDE_BLOCKED_RETRIES}`);
+      if (attempt === DefaultExecutor.IDE_BLOCKED_RETRIES) {
+        return { ...result, response: DefaultExecutor.rebuildTextResponse(result.response, text) };
+      }
+      await new Promise(resolve => setTimeout(resolve, DefaultExecutor.IDE_BLOCKED_RETRY_DELAY_MS));
+      result = await super.execute(args);
+      if (result.response?.status !== HTTP_STATUS.FORBIDDEN) return result;
+    }
+    return result;
+  }
+
+  static rebuildTextResponse(response, text) {
+    return new Response(text, { status: response.status, statusText: response.statusText, headers: response.headers });
   }
 
   transformRequest(model, body) {

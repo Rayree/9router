@@ -61,6 +61,11 @@ export const ERROR_RULES = [
   { text: "no credentials",           cooldownMs: COOLDOWN.long },
   { text: "request not allowed",      cooldownMs: COOLDOWN.short },
   { text: "improperly formed request", cooldownMs: COOLDOWN.long },
+  // Multi-channel relays gate IDE/toolchain clients per channel; sibling
+  // channels serve the same model. Short cooldown so the next request
+  // re-rolls the channel instead of locking the connection for 2 minutes.
+  { text: "ide_request_blocked",      cooldownMs: COOLDOWN.short },
+  { text: "检测到来自 ide 环境或工具链的请求", cooldownMs: COOLDOWN.short },
   { text: "rate limit",               backoff: true },
   { text: "too many requests",        backoff: true },
   { text: "quota exceeded",           backoff: true },
