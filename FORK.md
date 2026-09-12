@@ -4,6 +4,8 @@
 
 本仓库 fork 自 [decolua/9router](https://github.com/decolua/9router)（上游）。
 上游版本基线：**v0.5.40**（2026-07-20，commit `79918c78`）。
+最近同步：**v0.5.75**（2026-09-12，upstream/master `17c4cc76`，fast-forward master
++ merge 进 mine；冲突仅 models 路由 import 与 codex.js import，均为双保留）。
 
 ## Fork 目的
 
