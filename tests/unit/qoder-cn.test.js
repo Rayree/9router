@@ -55,9 +55,11 @@ describe("Qoder CN constants — domain split", () => {
   });
 
   it("model list and chat are on the gateway (inference) host", () => {
-    expect(QODER_CN_MODEL_LIST_URL).toBe("https://gateway.qoder.com.cn/api/v2/model/list");
+    // /algo prefix is mandatory — without it the ALB edge 503s before the app
+    // layer (calibrated live 2026-08-28, see FORK.md).
+    expect(QODER_CN_MODEL_LIST_URL).toBe("https://gateway.qoder.com.cn/algo/api/v2/model/list");
     expect(QODER_CN_CHAT_URL).toContain(
-      "https://gateway.qoder.com.cn/api/v2/service/pro/sse/agent_chat_generation",
+      "https://gateway.qoder.com.cn/algo/api/v2/service/pro/sse/agent_chat_generation",
     );
     expect(QODER_CN_CHAT_URL_ENCODED).toBe(`${QODER_CN_CHAT_URL}&Encode=1`);
   });
@@ -76,18 +78,25 @@ describe("Qoder CN COSY header constants", () => {
 });
 
 describe("Qoder CN model map", () => {
-  it("covers tier + frontier model keys", () => {
-    for (const key of ["auto", "ultimate", "performance", "efficient", "qmodel", "qmodel_latest", "dmodel", "dfmodel"]) {
+  // The CN catalog shares no tier keys with the international site — the real
+  // 13-key list was calibrated from a live PAT catalog pull (2026-08-28, FORK.md).
+  const REAL_CN_KEYS = [
+    "auto", "qmodel_38max", "qfmodel", "qmodel_latest", "qmodel", "q37fmodel",
+    "dmodel", "dfmodel", "gmodel", "gfmodel", "gm51model", "kmodel", "mmodel",
+  ];
+
+  it("covers the calibrated CN model keys", () => {
+    for (const key of REAL_CN_KEYS) {
       expect(QODER_CN_MODEL_MAP[key]).toBe(key);
     }
   });
 
   it("registry exposes the full model catalog under alias qdcn", () => {
     const ids = PROVIDER_MODELS.qdcn?.map((m) => m.id) || [];
-    expect(ids).toContain("ultimate");
-    expect(ids).toContain("qmodel_latest");
-    expect(ids).toContain("dfmodel");
-    expect(ids.length).toBeGreaterThanOrEqual(13);
+    for (const key of REAL_CN_KEYS) {
+      expect(ids).toContain(key);
+    }
+    expect(ids.length).toBe(REAL_CN_KEYS.length);
   });
 });
 
