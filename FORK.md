@@ -4,11 +4,13 @@
 
 本仓库 fork 自 [decolua/9router](https://github.com/decolua/9router)（上游）。
 上游版本基线：**v0.5.40**（2026-07-20，commit `79918c78`）。
-最近同步：**v0.5.81**（2026-09-19，upstream/master `a8c9d380`，fast-forward master
-+ merge 进 mine；零冲突——上游仅给 `DefaultExecutor.buildHeaders` 加了 `body`
-参数（传给 selectAnthropicBeta），与 fork 的重试 override / 头注入不重叠）。
-上一次同步：v0.5.75（2026-09-12，`17c4cc76`，冲突仅 models 路由 import 与
-codex.js import，均为双保留）。
+最近同步：**v0.5.112**（2026-11-01，upstream/master `1fe586bb`，257 个上游 commit，
+fast-forward master + merge 进 mine）。合并前先移除了 fork 自研的 qoder-cn（上游
+v0.5.85 已自带同 id 实现，见下方「Qoder CN」节），冲突因此从 13 个降到 2 个，均为双保留：
+`executors/codex.js`（上游新增 `x-openai-internal-codex-responses-lite` 头 + fork 的
+`applyCodexFacadeHeaders`）、`executors/default.js`（fork 的 403 `ide_request_blocked`
+重试 override + 上游新版 `transformRequest`/`applyNousAttribution`）。
+上一次同步：v0.5.81（2026-09-19，`a8c9d380`，零冲突）。
 
 ## Fork 目的
 
@@ -79,7 +81,8 @@ npx vitest run unit/compatible-provider-connections.test.js
 ### 合入时需重点关注的冲突区域
 
 上游如果修改了以下文件，合并时需手动检查冲突：
-1. **`open-sse/executors/default.js`** — 头注入逻辑可能与上游改动叠加
+1. **`open-sse/executors/default.js`** — 头注入逻辑 + fork 的 `execute()` override
+   （403 `ide_request_blocked` 透明重试，配套 `errorConfig.js` 短冷却规则）可能与上游改动叠加
 2. **`open-sse/executors/codex.js`** — 已重构为复用 codexFacade
 3. **`src/app/api/provider-nodes/route.js`** 及 `[id]/route.js` — 字段持久化逻辑
 4. **前端 modal 组件** — 上游可能调整 Provider 配置 UI 结构
@@ -97,80 +100,34 @@ npx vitest run unit/compatible-provider-connections.test.js
 
 ---
 
-## Qoder CN 提供商（2026-08-28 新增）
+## Qoder CN（2026-11-01 起改用上游实现）
 
-为本 fork 加入 `qoder-cn`（alias `qdcn`）提供商，对接 Qoder 国内版
-（`qoder.cn`，独立运营，与国际版 `qoder.sh` 完全分离的 endpoint 体系）。
+fork 曾在 2026-08-28 自研 `qoder-cn`（alias `qdcn`）。上游 v0.5.85（`402745dc`，
+2026-09-21）合入了同 id / 同 alias 的实现，并同时支持 OAuth 和 PAT（`pt-...`）两种
+认证，因此 fork 版本已在 `6578e432` 中整体移除，现在完全使用上游代码。已用 PAT
+添加的 qoder-cn 连接在上游实现下仍按 apikey 模式工作，无需重建。
 
-### 关键文件
+与 fork 版本的差异，出问题时可作排查依据：
+- 模型目录：fork 实测（2026-08-28）CN 站真实目录为 13 个：`auto, qmodel_38max,
+  qfmodel, qmodel_latest, qmodel, q37fmodel, dmodel, dfmodel, gmodel, gfmodel,
+  gm51model, kmodel, mmodel`。上游 registry 另列了 `ultimate/performance/efficient/
+  lite/kmodel_latest`，缺 `q37fmodel/gm51model`；以 Dashboard「Fetch Qoder Models」
+  拉取的实时列表为准。
+- 10605 排队：上游按 qodercli 的做法轮询队列状态后再重放，默认最长等 10 分钟，
+  环境变量为 `QODER_MODEL_QUEUE_MAX_WAIT_MS`；fork 旧的 `QODER_CN_QUEUE_RETRY_MAX_MS`
+  / `QODER_CN_QUEUE_RETRY_MAX_ATTEMPTS` 已失效。
 
-| 状态 | 文件 | 说明 |
-|------|------|------|
-| **新增** | `open-sse/executors/qoder-cn.js` | PAT → job token 交换 + COSY 签名 + SSE 转发 |
-| **新增** | `open-sse/providers/registry/qoder-cn.js` | 提供商注册（13 模型，UI 配置） |
-| **新增** | `open-sse/services/qoderModelsCn.js` | PAT 交换 + 动态 catalog 拉取 + 缓存 |
-| **新增** | `open-sse/shared/qoder-cn/constants.js` | endpoint / COSY 指纹常量 |
-| 修改 | `open-sse/providers/registry/index.js` | 自动重新生成（`scripts/migrate-registry.mjs`） |
-| 修改 | `src/app/(dashboard)/dashboard/providers/[id]/AddApiKeyModal.js` | UI 接受 `pt-...` PAT |
-| 修改 | `src/app/api/providers/validate/route.js` | 测试连接走 qoder-cn executor |
-| 修改 | `src/app/api/v1/models/route.js` | qdcn/* 模型列入 `/v1/models` |
-| 修改 | `src/app/(dashboard)/dashboard/usage/components/ProviderLimits/utils.js` | 配额卡片显示 |
-| 修改 | `public/i18n/literals/zh-CN.json` 等 | 多语言标签 |
-| 修改 | `tests/__baseline__/providers-baseline.json` / `alias-baseline.json` | 基线快照（82 providers / 117 aliases） |
-| 修改 | `tests/translator/__snapshots__/golden-url-header.test.js.snap` | url/header 黄金快照 |
+## 构建与打包踩坑（通用）
 
-### 接入流程（一次性）
-
-1. 用户去 `https://qoder.cn/account/integrations` 创建 PAT（`pt-...`）。
-2. Dashboard → 提供商 → Qoder CN → 添加连接 → 粘 PAT。
-3. 首次调用任一 `qdcn/*` 模型时，executor 自动：
-   - PAT 换 24h job token（`jt-...`）
-   - userinfo 拉 userId
-   - COSY 签名 GET `/algo/api/v2/model/list?Encode=1` 拉模型目录（1h 缓存）
-4. 之后的 chat 调用走 `/algo/api/v2/service/pro/sse/agent_chat_generation`，COSY 签名 + SSE 转发。
-
-### 踩坑与排查要点
-
-1. **endpoint 必须带 `/algo` 前缀**（2026-08-28 实测）：
-   - ❌ `gateway.qoder.com.cn/api/v2/model/list` → ALB 边缘直接 503，不到应用层
-   - ✅ `gateway.qoder.com.cn/algo/api/v2/model/list` → 200
-   - 参考国际版： `api3.qoder.sh/algo/api/v2/model/list`（`/algo` 是 qoder 的固定 prefix）
-   - chat SSE 同理： `/algo/api/v2/service/pro/sse/agent_chat_generation`
-
-2. **不要凭猜写模型列表**。初版 registry 复制了国际版的
-   `ultimate/performance/efficient/lite/qmodel_preview/kmodel_latest` 等，
-   但 CN 站真实 catalog 完全不同。校准方法：用 PAT 跑一次
-   `resolveQoderCnModels(..., { forceRefresh: true })` 拿到 rawConfigs
-   的真实 key + display_name 后再写 registry。当前真实列表（13 个）：
-   `auto, qmodel_38max, qfmodel, qmodel_latest, qmodel, q37fmodel, dmodel, dfmodel, gmodel, gfmodel, gm51model, kmodel, mmodel`。
-
-3. **CN 与国际版的差异**：
-   - 认证域 `openapi.qoder.com.cn`，推理域 `gateway.qoder.com.cn`（国际版单 host 多 subdomain）
-   - CN 认证只支持 PAT，**没有 device-code OAuth**
-   - CN 模型列表是 GET 带 `?Encode=1`，响应按 scene 分组（取 `body.assistant`），国际版是 POST + `body.chat`
-   - CN 的 COSY 指纹必须是 CLI CN `1.1.25` + `aarch64_darwin` + clientType `5`（不能用国际版的 IDE 指纹）
-   - PAT 换 job token 的 body 是 `{ personal_token: pt-... }`（不是 `{ token }`），`expires_in` 单位是**毫秒**
-
-4. **`cli:pack` 之后必须验证 tarball 内容**：
+1. **`cli:pack` 之后必须验证 tarball 内容**：
    - size 一致 ≠ 内容一致（webpack chunk 重新哈希后大小可能差不多）
-   - 验证： `tar -xzf 9router-*.tgz -C /tmp/x && grep -rl "qoder-cn\|qmodel_38max" /tmp/x/package/app/.next-cli-build/server/`
+   - 验证：`tar -xzf 9router-*.tgz -C /tmp/x && grep -rl "<本次改动的关键字符串>" /tmp/x/package/app/.next-cli-build/server/`
    - 如果关键字符串没进 tarball，先 `rm -rf cli/app` 再重跑 `npm run cli:pack`
 
-5. **Google Fonts 构建被墙**：
-   - 症状： `next build` 在 `src/app/layout.js` 的 `next/font/google` 卡死
-   - 临时改： 把 `Inter({...})` 替换成 `const inter = { variable: "font-sans" }` 并注释 import
+2. **Google Fonts 构建被墙**：
+   - 症状：`next build` 在 `src/app/layout.js` 的 `next/font/google` 卡死
+   - 临时改：把 `Inter({...})` 替换成 `const inter = { variable: "font-sans" }` 并注释 import
    - 构建完成后**必须还原**，否则后续 dev 模式字体不对
-
-### 端到端验证记录（2026-08-28）
-
-- PAT 创建 / 撤销 / 列出： ✅ Web UI 正常工作
-- PAT → job token 交换： ✅ 返回 `jt-...` 24h 有效
-- userinfo: ✅ 返回 userId `01a014d3-...`
-- 模型 catalog 拉取： ✅ 13 个模型完整返回（61KB JSON）
-- 13/13 模型 chat 调用： ✅ 全部返回正常 completion
-- Streaming (SSE)： ✅ chunk 正常 + `[DONE]` 收尾
-- 配额： 300 credits 专业试用版
-- reasoning 模型（auto/qmodel/dmodel/gmodel/gm51model/kmodel）返回里有 `reasoning_content` 字段，使用 `max_tokens` 太小会全花在思考上导致 `content=""` —— 给 200+ tokens 即可
 
 ---
 
