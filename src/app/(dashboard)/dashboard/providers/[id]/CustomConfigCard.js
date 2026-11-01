@@ -4,6 +4,7 @@ import { useCallback, useEffect, useState } from "react";
 import PropTypes from "prop-types";
 import { Card, Badge } from "@/shared/components";
 import { useNotificationStore } from "@/store/notificationStore";
+import { getHeaderPresets, applyHeaderPreset } from "./headerPresets";
 
 // Mirrors the server-side gate in /api/providers/[id]/overrides — client check is UX only
 const BLOCKED_HEADERS = ["host", "content-length", "content-type", "connection", "transfer-encoding", "authorization", "cookie"];
@@ -16,6 +17,7 @@ export default function CustomConfigCard({ providerId }) {
   const [builtin, setBuiltin] = useState({});
   const [hasOverride, setHasOverride] = useState(false);
   const [saving, setSaving] = useState(false);
+  const presets = getHeaderPresets(providerId);
 
   useEffect(() => {
     let cancelled = false;
@@ -39,11 +41,12 @@ export default function CustomConfigCard({ providerId }) {
     setRows((prev) => prev.map((r, idx) => (idx === i ? { ...r, [field]: value } : r)));
   };
 
-  const save = useCallback(async () => {
+  const save = useCallback(async (nextRows) => {
     // Diff-on-save: only rows differing from the registry default become overrides,
     // so a code-side registry bump still wins for everything the user left alone.
     const headers = {};
-    for (const r of rows.filter((r) => r.name.trim())) {
+    const source = Array.isArray(nextRows) ? nextRows : rows;
+    for (const r of source.filter((r) => r.name.trim())) {
       const name = r.name.trim();
       if (!HEADER_NAME_RE.test(name)) {
         notify.error(`Invalid header name: ${name}`);
@@ -83,8 +86,16 @@ export default function CustomConfigCard({ providerId }) {
     setRows(Object.entries(builtin).map(([name, value]) => ({ name, value })));
   };
 
-  // Only render when there is something to customize: registry headers or existing overrides
-  if (Object.keys(builtin).length === 0 && !hasOverride) return null;
+  // Fill the preset rows, show them, and save in one click
+  const applyPreset = (preset) => {
+    const next = applyHeaderPreset(rows, preset);
+    setRows(next);
+    setExpanded(true);
+    save(next);
+  };
+
+  // Only render when there is something to customize: registry headers, existing overrides or presets
+  if (Object.keys(builtin).length === 0 && !hasOverride && presets.length === 0) return null;
 
   return (
     <Card padding="xs">
@@ -104,6 +115,25 @@ export default function CustomConfigCard({ providerId }) {
           {expanded ? "expand_less" : "expand_more"}
         </span>
       </button>
+
+      {presets.length > 0 && (
+        <div className="mt-2 flex flex-wrap items-center gap-2">
+          <span className="text-xs text-text-muted">一键设置</span>
+          {presets.map((preset) => (
+            <button
+              key={preset.id}
+              type="button"
+              disabled={saving}
+              title={preset.description}
+              onClick={() => applyPreset(preset)}
+              className="flex items-center gap-1 rounded-md border border-border px-2 py-1 text-xs hover:bg-black/[0.03] dark:hover:bg-white/[0.03] disabled:opacity-50"
+            >
+              <span className="material-symbols-outlined text-[16px]">bolt</span>
+              {preset.label}
+            </button>
+          ))}
+        </div>
+      )}
 
       {expanded && (
         <div className="mt-3 border-t border-border pt-3">

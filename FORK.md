@@ -18,8 +18,8 @@ v0.5.85 已自带同 id 实现，见下方「Qoder CN」节），冲突因此从
 
 最初目的是让只允许 Codex 客户端访问的公益站点（如 anyrouter、wuming、muyuan、
 hiyo 等）能通过 9router 代理，为此加了 `simulateCodex` 开关。上游 v0.5.95 起自带
-按 provider 设置请求头的功能，该开关已于 2026-11-01 移除。现在 fork 只保留几处
-上游没有的修复，见下表。
+按 provider 设置请求头的功能，该开关已于 2026-11-01 移除，改为在上游卡片上加
+「Codex 客户端」一键预设。现在 fork 只保留几处上游没有的修复和这个预设按钮，见下表。
 
 ## 自定义改动
 
@@ -28,20 +28,30 @@ hiyo 等）能通过 9router 代理，为此加了 `simulateCodex` 开关。上�
 | 403 渠道拦截透明重试 | `open-sse/executors/default.js`（`execute()` override）、`open-sse/config/errorConfig.js`、`tests/unit/compatible-ide-blocked-retry.test.js` | 多渠道 new-api 中转对部分渠道返回 403 `ide_request_blocked` 时原样重放最多 2 次（换渠道），并把该错误的冷却从 2 分钟降到 5 秒 |
 | Responses 节点非流式修复 | `open-sse/handlers/chatCore.js`、`open-sse/handlers/chatCore/nonStreamingHandler.js`、`open-sse/transformer/streamToJsonConverter.js`、`tests/unit/openai-responses-nonstream.test.js` | 详见文末「hiyo.top 非流式修复」节 |
 | 国内网络探测 | `src/lib/tunnel/shared/internetCheck.js`、`src/lib/tunnel/shared/dnsResolver.js` | 联网检查与 DNS 用 223.5.5.5 替代 1.1.1.1 |
+| Custom Headers「一键设置」 | `src/app/(dashboard)/dashboard/providers/[id]/headerPresets.js`、`CustomConfigCard.js`、`tests/unit/header-presets.test.js` | compat 节点显示 Custom Headers 卡片，并提供「Codex 客户端」预设按钮，见「Codex 客户端模拟」节 |
 | 文档 | `FORK.md`、`CLAUDE.md` 顶部 fork 规则、`AGENTS.md`（→ `CLAUDE.md` 软链接） | |
 
 ## Codex 客户端模拟（改用上游 Custom Headers）
 
-上游 `b3cf3fde`（v0.5.95）在每个 provider 详情页底部加了 **Custom Headers** 卡片，
-OpenAI Compatible 节点也有。按节点保存到 `settings.providerOverrides`，在
-`BaseExecutor.execute` 里最后合并，同名头会覆盖内置值。
+上游 `b3cf3fde`（v0.5.95）在 provider 详情页底部加了 **Custom Headers** 卡片，
+按节点保存到 `settings.providerOverrides`，在 `BaseExecutor.execute` 里最后合并，
+同名头会覆盖内置值。但上游的卡片在「没有内置头且没有已保存覆盖」时直接
+`return null`，**OpenAI Compatible 节点在纯上游版本里看不到这个卡片**
+（API `PUT /api/providers/{id}/overrides` 本身接受 compat 节点）。
 
-对需要 Codex 客户端身份的节点，在该卡片里添加：
+fork 为此加了「一键设置」按钮：compat 节点（`openai-compatible-*`）的详情页
+总会显示 Custom Headers 卡片，标题下有 **Codex 客户端** 按钮，点一下把下面两个头
+写入表格并立即保存（已有的同名头会被替换，其他自定义头保留）：
 
 | Header | Value |
 |--------|-------|
 | `originator` | `codex_cli_rs` |
-| `User-Agent` | `codex_cli_rs/0.136.0` |
+| `User-Agent` | `codex_cli_rs/<CODEX_CLI_VERSION>`（2026-11-01 为 `0.159.0`） |
+
+取值直接读 `open-sse/providers/registry/codex.js` 的 `transport.headers`，上游
+升级 Codex 版本号时按钮跟着变。实现：`src/app/(dashboard)/dashboard/providers/[id]/headerPresets.js`
+（预设定义 + 合并逻辑）、同目录 `CustomConfigCard.js`（显示条件、按钮、`save(nextRows)`），
+测试 `tests/unit/header-presets.test.js`。
 
 限制：头名只允许字母、数字和 `-`，所以 **`session_id` 设不了**；`Authorization`、
 `Cookie`、`Host` 等被禁止覆盖。以前的 `simulateCodex` 还会自动带 `session_id`
@@ -102,6 +112,9 @@ cd tests && npx vitest run unit/compatible-ide-blocked-retry.test.js unit/openai
 2. **`open-sse/config/errorConfig.js`** — `ERROR_RULES` 里的两条短冷却规则
 3. **`open-sse/handlers/chatCore.js`** — `providerRequiresStreaming` 对 responses 节点的判断
 4. **`open-sse/handlers/chatCore/nonStreamingHandler.js`**、**`open-sse/transformer/streamToJsonConverter.js`**
+5. **`src/app/(dashboard)/dashboard/providers/[id]/CustomConfigCard.js`** — fork 改了
+   `return null` 的显示条件、`save` 的参数和标题下的预设按钮行；另外留意上游是否改了
+   `codex.js` 里 `transport.headers` 的结构（`headerPresets.js` 依赖它）
 
 ## 本地开发
 
@@ -231,7 +244,7 @@ Cloudflare 502（站点自身容量问题，与客户端指纹无关）。
    （codex 后端只收流式）；任何「responses 型上游 + 非流式客户端」的组合
    都必须走 forced-SSE 聚合，判断条件要跟这个事实对齐（本次 chatCore 修复）。
 4. **接入站点配置**：添加 OpenAI Compatible 节点 → API Type 选
-   Responses API → 在节点页 Custom Headers 卡片加 `originator` / `User-Agent`
+   Responses API → 在节点页 Custom Headers 卡片点「Codex 客户端」
    （见「Codex 客户端模拟」节）→ baseUrl 填站点根（如
    `https://free.hiyo.top/v1`）→ 连接填站点 key → 模型用站点 `/v1/models`
    实际返回的 id。

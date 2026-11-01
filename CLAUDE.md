@@ -22,8 +22,9 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 > - 403 `ide_request_blocked` transparent retry: `open-sse/executors/default.js` (`execute()` override) + two short-cooldown rules in `open-sse/config/errorConfig.js`
 > - Responses non-stream fixes for openai-compatible responses nodes: `open-sse/handlers/chatCore.js` (`providerRequiresStreaming`), `chatCore/nonStreamingHandler.js`, `transformer/streamToJsonConverter.js`
 > - Tunnel internet check / DNS uses 223.5.5.5: `src/lib/tunnel/shared/internetCheck.js`, `dnsResolver.js`
+> - Custom Headers one-click presets: `src/app/(dashboard)/dashboard/providers/[id]/headerPresets.js` + edits to `CustomConfigCard.js` (upstream hides the card on OpenAI-compatible nodes; the fork shows it there with a "Codex 客户端" button that saves `originator` + `User-Agent` read from `open-sse/providers/registry/codex.js`)
 >
-> **Removed in favor of upstream:** `qoder-cn` (upstream v0.5.85 ships it) and `simulateCodex` (use upstream's per-provider **Custom Headers** card with `originator: codex_cli_rs` + `User-Agent: codex_cli_rs/0.136.0`). Do not re-add either unless upstream's version proves insufficient.
+> **Removed in favor of upstream:** `qoder-cn` (upstream v0.5.85 ships it) and `simulateCodex` (replaced by upstream's per-provider **Custom Headers** plus the fork's "Codex 客户端" preset above). Do not re-add either unless upstream's version proves insufficient.
 >
 > **Conflict watch on upstream merge:** if upstream touched any file above, review the merge by hand — do not auto-accept either side.
 
