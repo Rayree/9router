@@ -7,53 +7,67 @@
 最近同步：**v0.5.112**（2026-11-01，upstream/master `1fe586bb`，257 个上游 commit，
 fast-forward master + merge 进 mine）。合并前先移除了 fork 自研的 qoder-cn（上游
 v0.5.85 已自带同 id 实现，见下方「Qoder CN」节），冲突因此从 13 个降到 2 个，均为双保留：
-`executors/codex.js`（上游新增 `x-openai-internal-codex-responses-lite` 头 + fork 的
+`executors/codex.js`（上游新增 `x-openai-internal-codex-responses-lite` 头 + 当时 fork 的
 `applyCodexFacadeHeaders`）、`executors/default.js`（fork 的 403 `ide_request_blocked`
 重试 override + 上游新版 `transformRequest`/`applyNousAttribution`）。
+同日随后移除了 `simulateCodex`，改用上游的 Custom Headers（见「Codex 客户端模拟」节），
+`codex.js` 已回到上游版本。
 上一次同步：v0.5.81（2026-09-19，`a8c9d380`，零冲突）。
 
 ## Fork 目的
 
-原 9router 没有模拟 Codex 客户端请求的功能，导致部分只允许 Codex
-客户端访问的公益站点（如 anyrouter、wuming、muyuan 等）无法通过
-9router 正常代理。本 fork 在不影响原有功能的前提下，为 OpenAI 兼容
-的自定义 Provider 增加了 **Codex 客户端模拟** 能力。
+最初目的是让只允许 Codex 客户端访问的公益站点（如 anyrouter、wuming、muyuan、
+hiyo 等）能通过 9router 代理，为此加了 `simulateCodex` 开关。上游 v0.5.95 起自带
+按 provider 设置请求头的功能，该开关已于 2026-11-01 移除。现在 fork 只保留几处
+上游没有的修复，见下表。
 
 ## 自定义改动
 
-### 核心功能：Codex 客户端模拟（`simulateCodex`）
-
-为 OpenAI 兼容 Custom Provider 增加逐个开关 `simulateCodex`，开启后
-在出站请求中注入 Codex CLI 身份头（originator / User-Agent /
-session_id / ChatGPT-Account-ID），实现纯 header 层伪装，不改动
-token 和 baseUrl。
-
-### 改动文件清单
-
-| 状态 | 文件 | 说明 |
+| 改动 | 文件 | 说明 |
 |------|------|------|
-| **新增** | `open-sse/shared/codexFacade.js` | 核心：`applyCodexFacadeHeaders()`，被 CodexExecutor 和 DefaultExecutor 复用 |
-| **新增** | `tests/unit/codex-facade.test.js` | codex 模拟头注入的单元测试 |
-| 修改 | `open-sse/executors/codex.js` | 复用 codexFacade 替代内联头逻辑 |
-| 修改 | `open-sse/executors/default.js` | 当 `simulateCodex === true` 时注入 codex 身份头 |
-| 修改 | `src/app/(dashboard)/dashboard/providers/[id]/EditCompatibleNodeModal.js` | UI 增加「模拟 codex 客户端」开关 |
-| 修改 | `src/app/(dashboard)/dashboard/providers/components/AddCompatibleModal.js` | UI 增加「模拟 codex 客户端」开关 |
-| 修改 | `src/app/api/provider-nodes/[id]/route.js` | 更新路径持久化 `simulateCodex` |
-| 修改 | `src/app/api/provider-nodes/route.js` | 创建路径持久化 `simulateCodex` |
-| 修改 | `src/app/api/providers/route.js` | 传递 `simulateCodex` 字段 |
-| 修改 | `src/lib/db/repos/nodesRepo.js` | nodesRepo 读取 `simulateCodex` |
-| 修改 | `tests/unit/compatible-provider-connections.test.js` | `simulateCodex` 持久化/传播回归测试 |
+| 403 渠道拦截透明重试 | `open-sse/executors/default.js`（`execute()` override）、`open-sse/config/errorConfig.js`、`tests/unit/compatible-ide-blocked-retry.test.js` | 多渠道 new-api 中转对部分渠道返回 403 `ide_request_blocked` 时原样重放最多 2 次（换渠道），并把该错误的冷却从 2 分钟降到 5 秒 |
+| Responses 节点非流式修复 | `open-sse/handlers/chatCore.js`、`open-sse/handlers/chatCore/nonStreamingHandler.js`、`open-sse/transformer/streamToJsonConverter.js`、`tests/unit/openai-responses-nonstream.test.js` | 详见文末「hiyo.top 非流式修复」节 |
+| 国内网络探测 | `src/lib/tunnel/shared/internetCheck.js`、`src/lib/tunnel/shared/dnsResolver.js` | 联网检查与 DNS 用 223.5.5.5 替代 1.1.1.1 |
+| 文档 | `FORK.md`、`CLAUDE.md` 顶部 fork 规则、`AGENTS.md`（→ `CLAUDE.md` 软链接） | |
 
-向后兼容：已有节点无 `simulateCodex` 字段（读取为 undefined → false），
-升级后行为不变，无需 DB 迁移（标志存储在 providerNodes.data JSON 列）。
+## Codex 客户端模拟（改用上游 Custom Headers）
+
+上游 `b3cf3fde`（v0.5.95）在每个 provider 详情页底部加了 **Custom Headers** 卡片，
+OpenAI Compatible 节点也有。按节点保存到 `settings.providerOverrides`，在
+`BaseExecutor.execute` 里最后合并，同名头会覆盖内置值。
+
+对需要 Codex 客户端身份的节点，在该卡片里添加：
+
+| Header | Value |
+|--------|-------|
+| `originator` | `codex_cli_rs` |
+| `User-Agent` | `codex_cli_rs/0.136.0` |
+
+限制：头名只允许字母、数字和 `-`，所以 **`session_id` 设不了**；`Authorization`、
+`Cookie`、`Host` 等被禁止覆盖。以前的 `simulateCodex` 还会自动带 `session_id`
+（按连接 id）和 `ChatGPT-Account-ID`（第三方中转一般没有）。
+
+2026-11-01 实测（`gpt-5.6-luna` @ free.hiyo.top，经 DefaultExecutor 直发）：
+
+| 请求头 | 结果 |
+|--------|------|
+| 不加 | 200，正文为拒绝文案「本站该模型仅限指定客户端使用……请使用 Codex CLI / Codex 桌面版 后重试」 |
+| `originator` + `User-Agent`，无 `session_id` | 200 `pong`，流式与非流式都正常 |
+
+同时测的 fengwind（526）、bohr / jianzhile（503 无可用渠道）、hyb（401 令牌无效）
+在加不加模拟头时结果完全相同，是站点自身问题，不能说明是否需要 `session_id`。
+如果以后遇到加了上面两个头仍被识别为非 Codex 客户端的站点，可能是它校验
+`session_id`，届时需要在 fork 里重新加回自动注入。
+
+库里 `providerNodes.data` 中残留的 `simulateCodex: true` 字段不再被读取，无害。
 
 ## 分支策略
 
 | 分支 | 用途 |
 |------|------|
 | `master` | 跟踪上游，保持与 `decolua/9router:master` 一致，不包含自定义改动 |
-| `feat/codex-client-emulation` | codex 模拟功能的开发分支 |
 | `mine` | 主工作分支，基于上游最新版本 + 自定义改动合并 |
+| `feat/codex-client-emulation` | 已过时：simulateCodex 的开发分支，功能已移除，不再维护 |
 
 ## 上游同步流程
 
@@ -64,35 +78,30 @@ token 和 baseUrl。
 git checkout master
 git remote add upstream https://github.com/decolua/9router.git  # 首次需要
 git fetch upstream
-git merge upstream/master
+git merge --ff-only upstream/master
 git push origin master
 
 # 2. 将上游更新合入 mine
 git checkout mine
 git merge master
-# 如有冲突，重点关注上述改动文件清单中的文件
+# 如有冲突，重点关注下方列出的文件
 git push origin mine
 
 # 3. 运行测试验证
-cd tests && npx vitest run unit/codex-facade.test.js
-npx vitest run unit/compatible-provider-connections.test.js
+cd tests && npx vitest run unit/compatible-ide-blocked-retry.test.js unit/openai-responses-nonstream.test.js
 ```
+
+全量测试在纯上游 master 上本来就有 30 个左右失败，判断回归要对比 master 的失败集合，
+不能只看总数。
 
 ### 合入时需重点关注的冲突区域
 
 上游如果修改了以下文件，合并时需手动检查冲突：
-1. **`open-sse/executors/default.js`** — 头注入逻辑 + fork 的 `execute()` override
-   （403 `ide_request_blocked` 透明重试，配套 `errorConfig.js` 短冷却规则）可能与上游改动叠加
-2. **`open-sse/executors/codex.js`** — 已重构为复用 codexFacade
-3. **`src/app/api/provider-nodes/route.js`** 及 `[id]/route.js` — 字段持久化逻辑
-4. **前端 modal 组件** — 上游可能调整 Provider 配置 UI 结构
-5. **`src/lib/db/repos/nodesRepo.js`** — 字段读取逻辑
-
-## 验证
-
-功能已在 muyuan.do（模型 `gpt-5.6-sol`）端到端验证：
-- 开关关闭 → 403 `channel:client_restricted (detected: node)`
-- 开关开启 → 200 流式响应正常完成
+1. **`open-sse/executors/default.js`** — fork 的 `execute()` override（403 `ide_request_blocked`
+   透明重试）可能与上游改动叠加
+2. **`open-sse/config/errorConfig.js`** — `ERROR_RULES` 里的两条短冷却规则
+3. **`open-sse/handlers/chatCore.js`** — `providerRequiresStreaming` 对 responses 节点的判断
+4. **`open-sse/handlers/chatCore/nonStreamingHandler.js`**、**`open-sse/transformer/streamToJsonConverter.js`**
 
 ## 本地开发
 
@@ -179,14 +188,15 @@ fork 曾在 2026-08-28 自研 `qoder-cn`（alias `qdcn`）。上游 v0.5.85（`4
 
 ---
 
-## simulateCodex 非流式修复 + hiyo.top 端到端验证（2026-09-07）
+## hiyo.top 非流式修复 + 端到端验证（2026-09-07）
 
 开源公益 Codex 中转站 `free.hiyo.top`（Codex 订阅站）实测接入成功。
 该站与 muyuan 同类：`/v1/responses` 校验客户端指纹，非 Codex 客户端
 返回 HTTP 200 但正文是「仅支持 Codex 官方客户端」的拒绝文案（伪装成
 正常回复，非报错）。指纹校验实测规则：**`originator: codex_cli_rs` 或
 codex 系 User-Agent 任一命中即放行**（curl 默认 UA + originator 也过）。
-`simulateCodex` 开关本身工作正常，但暴露出非流式路径两个 bug，已修复。
+当时用 `simulateCodex` 开关接入（现已改用 Custom Headers），过程中暴露出非流式路径
+两个 bug，已修复。这些修复与客户端模拟无关，仍保留在 fork 中。
 
 ### 端到端验证记录（2026-09-06/07，站点 key `sk-6bca...748d6`）
 
@@ -209,8 +219,7 @@ Cloudflare 502（站点自身容量问题，与客户端指纹无关）。
 | `open-sse/handlers/chatCore/nonStreamingHandler.js` | `translateNonStreamingResponse` 只有「chat 上游 → responses 客户端」分支，缺反向（responses 上游真回 JSON 时 chat 客户端拿不到 content） | 新增 `openAIResponsesCompletionToChat()`：message/reasoning/function_call → choices[0].message，usage 含 cached_tokens |
 
 回归测试：`tests/unit/openai-responses-nonstream.test.js` 新增 4 个用例
-（hiyo bug describe），连同 `codex-facade` / `compatible-provider-connections`
-共 30/30 通过。
+（hiyo bug describe）。
 
 ### 踩坑要点
 
@@ -222,6 +231,7 @@ Cloudflare 502（站点自身容量问题，与客户端指纹无关）。
    （codex 后端只收流式）；任何「responses 型上游 + 非流式客户端」的组合
    都必须走 forced-SSE 聚合，判断条件要跟这个事实对齐（本次 chatCore 修复）。
 4. **接入站点配置**：添加 OpenAI Compatible 节点 → API Type 选
-   Responses API → 开「模拟 codex 客户端」→ baseUrl 填站点根（如
+   Responses API → 在节点页 Custom Headers 卡片加 `originator` / `User-Agent`
+   （见「Codex 客户端模拟」节）→ baseUrl 填站点根（如
    `https://free.hiyo.top/v1`）→ 连接填站点 key → 模型用站点 `/v1/models`
    实际返回的 id。

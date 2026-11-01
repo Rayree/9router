@@ -11,20 +11,19 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 > |--------|---------|------|
 > | `master` | Pristine mirror of upstream `decolua/9router:master` | NEVER commit custom changes here |
 > | `mine` | Main work branch = latest upstream + custom changes | Default branch for all work |
-> | `feat/codex-client-emulation` | Feature dev branch for the codex emulation | Rebase onto new baseline when resuming |
+> | `feat/codex-client-emulation` | Obsolete: dev branch of the removed `simulateCodex` feature | Do not resume |
 >
 > **Upstream sync flow** (when decolua/9router releases a new version):
-> 1. `git checkout master && git pull` (tracks `upstream/master`) && `git push origin master`
+> 1. `git checkout master && git fetch upstream && git merge --ff-only upstream/master && git push origin master`
 > 2. `git checkout mine && git merge master` && resolve conflicts && `git push origin mine`
-> 3. Verify: `cd tests && npx vitest run unit/codex-facade.test.js unit/compatible-provider-connections.test.js`
+> 3. Verify: `cd tests && npx vitest run unit/compatible-ide-blocked-retry.test.js unit/openai-responses-nonstream.test.js`. The full suite already has ~30 failures on pure upstream master, so judge regressions by diffing failure sets against master, not by the raw count.
 >
-> **Custom feature: `simulateCodex`** — this fork adds a per-node toggle that injects Codex CLI identity headers into outbound requests for OpenAI-compatible custom providers (needed for client-restricted 公益站点). Key files:
-> - `open-sse/shared/codexFacade.js` (core, NEW in fork)
-> - `open-sse/executors/default.js` (header injection when `simulateCodex === true`)
-> - `open-sse/executors/codex.js` (refactored to reuse codexFacade)
-> - `src/app/api/provider-nodes/route.js` + `[id]/route.js` (persistence)
-> - `src/lib/db/repos/nodesRepo.js` (field read)
-> - `EditCompatibleNodeModal.js` / `AddCompatibleModal.js` (UI toggle)
+> **Custom changes kept in this fork** (see `FORK.md` for details):
+> - 403 `ide_request_blocked` transparent retry: `open-sse/executors/default.js` (`execute()` override) + two short-cooldown rules in `open-sse/config/errorConfig.js`
+> - Responses non-stream fixes for openai-compatible responses nodes: `open-sse/handlers/chatCore.js` (`providerRequiresStreaming`), `chatCore/nonStreamingHandler.js`, `transformer/streamToJsonConverter.js`
+> - Tunnel internet check / DNS uses 223.5.5.5: `src/lib/tunnel/shared/internetCheck.js`, `dnsResolver.js`
+>
+> **Removed in favor of upstream:** `qoder-cn` (upstream v0.5.85 ships it) and `simulateCodex` (use upstream's per-provider **Custom Headers** card with `originator: codex_cli_rs` + `User-Agent: codex_cli_rs/0.136.0`). Do not re-add either unless upstream's version proves insufficient.
 >
 > **Conflict watch on upstream merge:** if upstream touched any file above, review the merge by hand — do not auto-accept either side.
 
