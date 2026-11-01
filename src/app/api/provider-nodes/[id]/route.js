@@ -6,7 +6,7 @@ export async function PUT(request, { params }) {
   try {
     const { id } = await params;
     const body = await request.json();
-    const { name, prefix, apiType, baseUrl, simulateCodex } = body;
+    const { name, prefix, apiType, baseUrl } = body;
     const node = await getProviderNodeById(id);
 
     if (!node) {
@@ -56,8 +56,6 @@ export async function PUT(request, { params }) {
 
     if (node.type === "openai-compatible") {
       updates.apiType = apiType;
-      // Codex client emulation only applies to openai-compatible custom providers.
-      updates.simulateCodex = simulateCodex === true;
     }
 
     const updated = await updateProviderNode(id, updates);
@@ -71,7 +69,6 @@ export async function PUT(request, { params }) {
           apiType: node.type === "openai-compatible" ? apiType : undefined,
           baseUrl: sanitizedBaseUrl,
           nodeName: updated.name,
-          simulateCodex: node.type === "openai-compatible" ? updated.simulateCodex === true : undefined,
         }
       })
     )));

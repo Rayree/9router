@@ -32,7 +32,7 @@ export async function GET() {
 export async function POST(request) {
   try {
     const body = await request.json();
-    const { name, prefix, apiType, baseUrl, type, simulateCodex } = body;
+    const { name, prefix, apiType, baseUrl, type } = body;
 
     if (!name?.trim()) {
       return NextResponse.json({ error: "Name is required" }, { status: 400 });
@@ -57,9 +57,6 @@ export async function POST(request) {
         apiType,
         baseUrl: (baseUrl || OPENAI_COMPATIBLE_DEFAULTS.baseUrl).trim(),
         name: name.trim(),
-        // Codex client emulation — only meaningful for openai-compatible custom
-        // providers whose upstream gateways restrict to codex-shaped clients.
-        simulateCodex: simulateCodex === true,
       });
       return NextResponse.json({ node }, { status: 201 });
     }

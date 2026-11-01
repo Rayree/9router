@@ -12,7 +12,6 @@ import { getThinkingLevels } from "../providers/thinkingLevels.js";
 import { DEFAULT_RETRY_CONFIG, HTTP_STATUS, resolveRetryEntry } from "../config/runtimeConfig.js";
 import { dbg } from "../utils/debugLog.js";
 import { resolveSessionId } from "../utils/sessionManager.js";
-import { applyCodexFacadeHeaders } from "../shared/codexFacade.js";
 import { stripCodexUnsupportedPatterns } from "../utils/codexToolSchema.js";
 
 // SSE error patterns inside 200-OK bodies. Some retry same account first; capacity rotates accounts.
@@ -223,20 +222,21 @@ export class CodexExecutor extends BaseExecutor {
     if (isCodexResponsesLiteModel(model && getModelUpstreamId("cx", model)) && !body?.tools?.some?.(tool => tool?.type === "web_search")) {
       headers["x-openai-internal-codex-responses-lite"] = "true";
     }
-    // Inject the full codex client identity header set (originator, User-Agent,
-    // session_id, ChatGPT-Account-ID). session_id prefers the conversation-stable
-    // value resolved in transformRequest (this._currentSessionId), then falls back
-    // to connectionId / "default". UA is normally already set from the codex
-    // registry's transport.headers; the guard inside makes this idempotent.
-    // Account/workspace binding: required when multiple Codex accounts are
-    // configured. OAuth import stores ChatGPT account ID as chatgptAccountId;
+    headers["session_id"] = this._currentSessionId || credentials?.connectionId || "default";
+    // Identify client type to Codex backend (matches official codex CLI)
+    if (!headers["originator"]) headers["originator"] = "codex_cli_rs";
+    // Account/workspace binding header — required when multiple Codex accounts
+    // are configured. OAuth import stores ChatGPT account ID as chatgptAccountId;
     // older/custom rows may use workspaceId/accountId. Prefer explicit workspaceId
     // but fall back to chatgptAccountId so requests don't cross-bind to the wrong
     // OpenAI account and surface as token_invalid after adding another account.
-    applyCodexFacadeHeaders(headers, {
-      credentials,
-      sessionId: this._currentSessionId,
-    });
+    const accountId =
+      credentials?.providerSpecificData?.workspaceId ||
+      credentials?.providerSpecificData?.chatgptAccountId ||
+      credentials?.providerSpecificData?.accountId;
+    if (typeof accountId === "string" && accountId && !headers["ChatGPT-Account-ID"]) {
+      headers["ChatGPT-Account-ID"] = accountId;
+    }
     return headers;
   }
 
