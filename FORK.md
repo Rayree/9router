@@ -26,7 +26,7 @@ hiyo 等）能通过 9router 代理，为此加了 `simulateCodex` 开关。上�
 | 改动 | 文件 | 说明 |
 |------|------|------|
 | 403 渠道拦截透明重试 | `open-sse/executors/default.js`（`execute()` override）、`open-sse/config/errorConfig.js`、`tests/unit/compatible-ide-blocked-retry.test.js` | 多渠道 new-api 中转对部分渠道返回 403 `ide_request_blocked` 时原样重放最多 2 次（换渠道），并把该错误的冷却从 2 分钟降到 5 秒 |
-| Responses 节点非流式修复 | `open-sse/handlers/chatCore.js`、`open-sse/handlers/chatCore/nonStreamingHandler.js`、`open-sse/transformer/streamToJsonConverter.js`、`tests/unit/openai-responses-nonstream.test.js` | 详见文末「hiyo.top 非流式修复」节 |
+| Responses 节点非流式修复 | `open-sse/handlers/chatCore/nonStreamingHandler.js`、`open-sse/transformer/streamToJsonConverter.js`、`tests/unit/openai-responses-nonstream.test.js`、`tests/unit/compatible-responses-nonstream-routing.test.js` | 详见文末「hiyo.top 非流式修复」节；`chatCore.js` 已于 2026-11-01 恢复上游版本 |
 | 国内网络探测 | `src/lib/tunnel/shared/internetCheck.js`、`src/lib/tunnel/shared/dnsResolver.js` | 联网检查与 DNS 用 223.5.5.5 替代 1.1.1.1 |
 | Custom Headers「一键设置」 | `src/app/(dashboard)/dashboard/providers/[id]/headerPresets.js`、`CustomConfigCard.js`、`tests/unit/header-presets.test.js` | compat 节点显示 Custom Headers 卡片，并提供「Codex 客户端」预设按钮，见「Codex 客户端模拟」节 |
 | 文档 | `FORK.md`、`CLAUDE.md` 顶部 fork 规则、`AGENTS.md`（→ `CLAUDE.md` 软链接） | |
@@ -98,7 +98,8 @@ git merge master
 git push origin mine
 
 # 3. 运行测试验证
-cd tests && npx vitest run unit/compatible-ide-blocked-retry.test.js unit/openai-responses-nonstream.test.js
+cd tests && npx vitest run unit/compatible-ide-blocked-retry.test.js unit/openai-responses-nonstream.test.js \
+  unit/compatible-responses-nonstream-routing.test.js unit/header-presets.test.js
 ```
 
 全量测试在纯上游 master 上本来就有 30 个左右失败，判断回归要对比 master 的失败集合，
@@ -110,9 +111,8 @@ cd tests && npx vitest run unit/compatible-ide-blocked-retry.test.js unit/openai
 1. **`open-sse/executors/default.js`** — fork 的 `execute()` override（403 `ide_request_blocked`
    透明重试）可能与上游改动叠加
 2. **`open-sse/config/errorConfig.js`** — `ERROR_RULES` 里的两条短冷却规则
-3. **`open-sse/handlers/chatCore.js`** — `providerRequiresStreaming` 对 responses 节点的判断
-4. **`open-sse/handlers/chatCore/nonStreamingHandler.js`**、**`open-sse/transformer/streamToJsonConverter.js`**
-5. **`src/app/(dashboard)/dashboard/providers/[id]/CustomConfigCard.js`** — fork 改了
+3. **`open-sse/handlers/chatCore/nonStreamingHandler.js`**、**`open-sse/transformer/streamToJsonConverter.js`**
+4. **`src/app/(dashboard)/dashboard/providers/[id]/CustomConfigCard.js`** — fork 改了
    `return null` 的显示条件、`save` 的参数和标题下的预设按钮行；另外留意上游是否改了
    `codex.js` 里 `transport.headers` 的结构（`headerPresets.js` 依赖它）
 
@@ -227,12 +227,23 @@ Cloudflare 502（站点自身容量问题，与客户端指纹无关）。
 
 | 文件 | 问题 | 修复 |
 |------|------|------|
-| `open-sse/handlers/chatCore.js` | 自定义节点不在 `PROVIDERS`，`PROVIDERS[provider]?.forceStream` 恒为 false；但请求翻译器 `openaiToOpenAIResponsesRequest` **硬编码 `stream: true`**，上游永远回 SSE → 非流式客户端的 Responses SSE 被 `parseSSEToOpenAIResponse`（chat 解析器）错误解析 → 空 content | compatible-responses 节点（`resolveOpenAICompatibleApiType() === "responses"`）与 codex 一致视为强制流式，统一走 forced-SSE 聚合路径 |
+| `open-sse/handlers/chatCore.js`（**已撤销**，见下方说明） | 自定义节点不在 `PROVIDERS`，`PROVIDERS[provider]?.forceStream` 恒为 false；但请求翻译器 `openaiToOpenAIResponsesRequest` **硬编码 `stream: true`**，上游永远回 SSE → 非流式客户端的 Responses SSE 被 `parseSSEToOpenAIResponse`（chat 解析器）错误解析 → 空 content | compatible-responses 节点（`resolveOpenAICompatibleApiType() === "responses"`）与 codex 一致视为强制流式，统一走 forced-SSE 聚合路径 |
 | `open-sse/transformer/streamToJsonConverter.js` | 聚合只认 `response.output_item.done` 事件，但 hiyo 从不发该事件（完整 `output` 只在 `response.completed` 里）→ 聚合结果 `output: []` | `completed` 时若 `items` 为空，采纳 `response.output` 数组 |
 | `open-sse/handlers/chatCore/nonStreamingHandler.js` | `translateNonStreamingResponse` 只有「chat 上游 → responses 客户端」分支，缺反向（responses 上游真回 JSON 时 chat 客户端拿不到 content） | 新增 `openAIResponsesCompletionToChat()`：message/reasoning/function_call → choices[0].message，usage 含 cached_tokens |
 
 回归测试：`tests/unit/openai-responses-nonstream.test.js` 新增 4 个用例
 （hiyo bug describe）。
+
+**2026-11-01 撤销 chatCore.js 的改动。** 上游 `b00ba1aa`（2026-10-07）在
+`chatCore.js` 里把 `providerResponseFormat === FORMATS.OPENAI_RESPONSES` 也送进
+forced-SSE 聚合分支，覆盖了上面那一行要修的场景（chat / claude 非流式客户端 →
+responses 节点）。fork 的强制流式反而造成了新 bug：Responses 客户端非流式调用
+responses 节点时请求不经翻译，发给上游的仍是 `stream:false`，上游回 JSON，网关
+却当成流转发，客户端收到 `text/event-stream` 的 `<json>data: [DONE]`。不带
+`stream` 字段、`Accept: application/json` 的 SDK 请求同样中招（fork 的判断还屏蔽了
+Accept 分支）。现在 `chatCore.js` 与上游一致，回归测试在
+`tests/unit/compatible-responses-nonstream-routing.test.js`（真实 `handleChatCore`，
+模拟上游按 `stream` 决定回 SSE 还是 JSON）。
 
 ### 踩坑要点
 
@@ -240,9 +251,13 @@ Cloudflare 502（站点自身容量问题，与客户端指纹无关）。
    拒绝文案，9router 会原样透传给客户端——排查「模型说怪话」时先确认
    站点是否认出了客户端，别只看状态码。
 2. **hiyo 不发 `response.output_item.done`**，聚合器别只依赖逐 item 事件。
+   （2026-11-01 复测时 hiyo 已开始发该事件，也会按 `stream:false` 回 JSON；
+   兜底逻辑保留给其他不发该事件的中转。）
 3. **`openaiToOpenAIResponsesRequest` 强制 `stream: true`** 是上游原始设计
-   （codex 后端只收流式）；任何「responses 型上游 + 非流式客户端」的组合
-   都必须走 forced-SSE 聚合，判断条件要跟这个事实对齐（本次 chatCore 修复）。
+   （codex 后端只收流式），但只作用于经过翻译的请求。Responses 客户端直连
+   responses 节点时不翻译，`stream` 原样透传，上游可能回 JSON。所以只能对
+   「翻译后确实是流式」的请求走 forced-SSE 聚合，不能按节点类型一刀切
+   （上游 `chatCore.js` 现在就是这样判断的）。
 4. **接入站点配置**：添加 OpenAI Compatible 节点 → API Type 选
    Responses API → 在节点页 Custom Headers 卡片点「Codex 客户端」
    （见「Codex 客户端模拟」节）→ baseUrl 填站点根（如

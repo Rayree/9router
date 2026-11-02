@@ -16,11 +16,11 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 > **Upstream sync flow** (when decolua/9router releases a new version):
 > 1. `git checkout master && git fetch upstream && git merge --ff-only upstream/master && git push origin master`
 > 2. `git checkout mine && git merge master` && resolve conflicts && `git push origin mine`
-> 3. Verify: `cd tests && npx vitest run unit/compatible-ide-blocked-retry.test.js unit/openai-responses-nonstream.test.js`. The full suite already has ~30 failures on pure upstream master, so judge regressions by diffing failure sets against master, not by the raw count.
+> 3. Verify: `cd tests && npx vitest run unit/compatible-ide-blocked-retry.test.js unit/openai-responses-nonstream.test.js unit/compatible-responses-nonstream-routing.test.js unit/header-presets.test.js`. The full suite already has ~30 failures on pure upstream master, so judge regressions by diffing failure sets against master, not by the raw count.
 >
 > **Custom changes kept in this fork** (see `FORK.md` for details):
 > - 403 `ide_request_blocked` transparent retry: `open-sse/executors/default.js` (`execute()` override) + two short-cooldown rules in `open-sse/config/errorConfig.js`
-> - Responses non-stream fixes for openai-compatible responses nodes: `open-sse/handlers/chatCore.js` (`providerRequiresStreaming`), `chatCore/nonStreamingHandler.js`, `transformer/streamToJsonConverter.js`
+> - Responses non-stream fixes for openai-compatible responses nodes: `open-sse/handlers/chatCore/nonStreamingHandler.js`, `open-sse/transformer/streamToJsonConverter.js`. `chatCore.js` is upstream's version again: do not re-add a node-type-based `providerRequiresStreaming` for responses nodes; it breaks non-stream Responses clients (see FORK.md and `tests/unit/compatible-responses-nonstream-routing.test.js`)
 > - Tunnel internet check / DNS uses 223.5.5.5: `src/lib/tunnel/shared/internetCheck.js`, `dnsResolver.js`
 > - Custom Headers one-click presets: `src/app/(dashboard)/dashboard/providers/[id]/headerPresets.js` + edits to `CustomConfigCard.js` (upstream hides the card on OpenAI-compatible nodes; the fork shows it there with a "Codex 客户端" button that saves `originator` + `User-Agent` read from `open-sse/providers/registry/codex.js`)
 >
