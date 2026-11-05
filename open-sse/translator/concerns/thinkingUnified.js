@@ -5,6 +5,7 @@
 import { getCapabilitiesForModel } from "../../providers/capabilities.js";
 import { getThinkingLevels } from "../../providers/thinkingLevels.js";
 import { PROVIDERS } from "../../providers/index.js";
+import { FORMATS } from "../formats.js";
 import { LEVEL_TO_BUDGET, budgetToLevel, effortToBudget, effortToThinkingLevel } from "./thinking.js";
 
 // Map a target wire-format to its native thinking format (when capability has none).
@@ -450,7 +451,12 @@ export function applyThinking(targetFormat, model, body, provider = null, intent
   }
   if (!cfg) return body;
 
-  const fmt = resolveFormat(targetFormat, cleanModel, provider);
+  const compatibleResponses = targetFormat === FORMATS.OPENAI_RESPONSES && provider?.startsWith?.("openai-compatible-");
+  // These nodes accept the OpenAI effort levels, regardless of the model's
+  // native thinking format. Keep Responses-only options through normalization.
+  const reasoning = compatibleResponses && body.reasoning && typeof body.reasoning === "object" && !Array.isArray(body.reasoning)
+    ? { ...body.reasoning } : {};
+  const fmt = compatibleResponses ? FORMATS.OPENAI : resolveFormat(targetFormat, cleanModel, provider);
   const supportedLevels = getThinkingLevels(provider, cleanModel);
   // Anthropic's `display` (summarized | omitted) decides whether thinking text
   // comes back at all; keep what the client asked for instead of resetting it.
@@ -458,5 +464,11 @@ export function applyThinking(targetFormat, model, body, provider = null, intent
   const display = typeof body.thinking?.display === "string" ? body.thinking.display : intent?.display;
   stripAll(body);
   applyFormat(fmt, body, cfg, caps, supportedLevels, display, cleanModel);
+  if (compatibleResponses) {
+    const effort = body.reasoning_effort;
+    body.reasoning = { ...reasoning, ...(effort ? { effort } : {}) };
+    if (effort === "auto") delete body.reasoning.effort;
+    delete body.reasoning_effort;
+  }
   return body;
 }

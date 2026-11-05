@@ -8,7 +8,7 @@ import { buildClineHeaders } from "../shared/clineAuth.js";
 import { proxyAwareFetch } from "../utils/proxyFetch.js";
 import { injectReasoningContent } from "../utils/reasoningContentInjector.js";
 import { stripUnsupportedParams } from "../translator/concerns/paramSupport.js";
-import { HTTP_STATUS } from "../config/runtimeConfig.js";
+import { HTTP_STATUS, COMPAT_RESPONSES_HEADERS_TIMEOUT_MS } from "../config/runtimeConfig.js";
 import { dbg } from "../utils/debugLog.js";
 import { extractClaudeSessionIdFromUserId } from "../utils/claudeCloaking.js";
 
@@ -130,6 +130,16 @@ export class DefaultExecutor extends BaseExecutor {
 
   static rebuildTextResponse(response, text) {
     return new Response(text, { status: response.status, statusText: response.statusText, headers: response.headers });
+  }
+
+  getResponseHeadersTimeoutMs(model, body, stream, credentials) {
+    if (!this.config?.timeoutMs && this.provider?.startsWith?.("openai-compatible-")
+      && resolveOpenAICompatibleApiType(this.provider, credentials) === "responses") {
+      // Some relays buffer response headers until prefill/reasoning finishes.
+      // A 60s abort would repeatedly restart the same slow generation.
+      return COMPAT_RESPONSES_HEADERS_TIMEOUT_MS;
+    }
+    return super.getResponseHeadersTimeoutMs();
   }
 
   transformRequest(model, body, stream, credentials) {

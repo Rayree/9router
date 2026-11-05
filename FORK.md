@@ -27,7 +27,9 @@ hiyo 等）能通过 9router 代理，为此加了 `simulateCodex` 开关。上�
 |------|------|------|
 | 403 渠道拦截透明重试 | `open-sse/executors/default.js`（`execute()` override）、`open-sse/config/errorConfig.js`、`tests/unit/compatible-ide-blocked-retry.test.js` | 多渠道 new-api 中转对部分渠道返回 403 `ide_request_blocked` 时原样重放最多 2 次（换渠道），并把该错误的冷却从 2 分钟降到 5 秒 |
 | Responses 节点思考参数修复 | `open-sse/executors/default.js`（`transformRequest()`）、`tests/unit/compatible-responses-reasoning.test.js` | 统一思考处理仍输出 Chat 格式，在发送 Responses 节点前转换为 `reasoning.effort`；修复 ZCode → zzz 的 400，保留 `max`/`none`，`auto` 使用上游默认值 |
-| Responses 节点非流式修复 | `open-sse/handlers/chatCore/nonStreamingHandler.js`、`open-sse/transformer/streamToJsonConverter.js`、`tests/unit/openai-responses-nonstream.test.js`、`tests/unit/compatible-responses-nonstream-routing.test.js` | 详见文末「hiyo.top 非流式修复」节；`chatCore.js` 已于 2026-11-01 恢复上游版本 |
+| 客户端思考参数优先 | `open-sse/handlers/chatCore.js`、`open-sse/translator/concerns/thinkingUnified.js`、`tests/unit/compatible-responses-nonstream-routing.test.js` | 节点默认值只在客户端没有思考意图时补入；compatible Responses 保留 `reasoning` 选项并直接写嵌套 effort |
+| Responses 慢响应等待 | `open-sse/executors/base.js`、`default.js`、`open-sse/config/runtimeConfig.js`、`tests/unit/compatible-responses-timeout.test.js` | compatible Responses 等待响应头默认 200 秒，可配置；取消请求后立即停止重试 |
+| Responses 节点非流式修复 | `open-sse/handlers/chatCore/nonStreamingHandler.js`、`open-sse/transformer/streamToJsonConverter.js`、`tests/unit/openai-responses-nonstream.test.js`、`tests/unit/compatible-responses-nonstream-routing.test.js` | 详见文末「hiyo.top 非流式修复」节；`chatCore.js` 的流式决策保持上游行为 |
 | 国内网络探测 | `src/lib/tunnel/shared/internetCheck.js`、`src/lib/tunnel/shared/dnsResolver.js` | 联网检查与 DNS 用 223.5.5.5 替代 1.1.1.1 |
 | Custom Headers「一键设置」 | `src/app/(dashboard)/dashboard/providers/[id]/headerPresets.js`、`CustomConfigCard.js`、`tests/unit/header-presets.test.js` | compat 节点显示 Custom Headers 卡片，并提供「Codex 客户端」预设按钮，见「Codex 客户端模拟」节 |
 | CLI 打包隔离 | `cli/scripts/build-cli.js` | 复制 standalone 时排除 `.build-home`，避免夹带构建期间生成的数据库和机器标识 |
@@ -113,6 +115,41 @@ auto 默认强度及 max 非流式 Responses，均有成功的 200 与完整结�
 部署后公网隧道已恢复，公开 URL 与直接 URL 的健康检查均为 200。
 安全：修复只调整请求体格式，不读取或改动凭据，构建包已检查不包含运行时数据库和身份文件。
 
+## Codex++ → zzz 超时（2026-11-05）
+
+客户端日志确认 12:37、12:50（北京时间）报错链为上游 `fetch connect timeout`
+→ 网关 502 → 连接短暂冷却 → 客户端收到 503。当前生效配置中，直连与 9router
+均使用 `api666.zzzcoding.org/v1` 和相同密钥，不能以旧配置里的域名差异解释。
+
+检查发现客户端选择 `xhigh`，9router 的节点默认 `max` 却因只检查顶层
+`reasoning_effort` 而覆盖 Responses 的 `reasoning.effort`；统一思考处理还会
+丢掉 `reasoning.summary`。现以 `extractThinking` 判断已有意图，并保留 compatible
+Responses 的 reasoning 对象与标准嵌套 effort。之前 executor 的转换保留为兜底。
+
+等待上游响应头的旧预算是每次 60 秒，3 次重试后约 249 秒失败；每次重新提交
+都会重启上游计算。compatible Responses 改用 200 秒预处理预算，显式 provider
+`timeoutMs` 与 `FETCH_CONNECT_TIMEOUT_MS` 仍有效，也可单独设置
+`COMPAT_RESPONSES_HEADERS_TIMEOUT_MS`。Chat 节点维持原值，取消请求立即终止重试。
+这提高慢响应容忍度，不保证上游可用性；排查时直连的一个短请求也曾等待 55 秒超时。
+`chatCore.js` 现在包含上述思考默认值修复，流式决策仍与上游一致，不能恢复旧的强制流式逻辑。
+
+已重新构建、安装全局 CLI 并重启本机 `:20128`，新包 3465 个文件与安装目录逐一校验一致。
+14 个相关测试文件共 212 项通过，另有 8 项构建产物测试通过；假时钟验证慢响应、
+200 秒上限、Chat 仍为 60 秒、显式超时覆盖和客户端取消。
+
+部署后对实际 zzz 的验证结果：
+- Responses `xhigh`、48 组工具历史（约 42 KB）在 35.55 秒完成工具调用，收到 `response.completed`。
+- 该长历史的工具结果续接在 187.38 秒收到 zzz 的 Cloudflare 504，网关返回 503；
+  这是保留下来的失败结果，不能据此声称完整长会话已经恢复或上游延迟稳定。
+- 单组确定性工具历史回传：Responses 在 73.13 秒收到 `response.completed`，
+  ZCode Messages 在 69.65 秒收到 `message_stop`，均包含正确的工具结果。
+- Responses 非流式 JSON 在 13.53 秒返回 `status: completed`，流式在 2.84 秒完成；
+  请求详情确认发送的是 `reasoning: {effort: "xhigh", summary: "auto"}`，没有顶层 effort。
+- Messages 短请求也正常结束。未自动重放用户提供的完整 Codex++ 会话。
+- 重启后已恢复隧道，公开 URL 与直接隧道 URL 的健康检查均为 200。
+
+安全：未修改凭据或认证逻辑；tarball 检查不包含构建数据库、机器标识和 CLI 身份文件。
+
 ## 分支策略
 
 | 分支 | 用途 |
@@ -141,7 +178,8 @@ git push origin mine
 
 # 3. 运行测试验证
 cd tests && npx vitest run unit/compatible-ide-blocked-retry.test.js unit/openai-responses-nonstream.test.js \
-  unit/compatible-responses-nonstream-routing.test.js unit/compatible-responses-reasoning.test.js unit/header-presets.test.js
+  unit/compatible-responses-nonstream-routing.test.js unit/compatible-responses-reasoning.test.js \
+  unit/compatible-responses-timeout.test.js unit/header-presets.test.js
 ```
 
 全量测试在纯上游 master 上本来就有 30 个左右失败，判断回归要对比 master 的失败集合，
@@ -157,6 +195,10 @@ cd tests && npx vitest run unit/compatible-ide-blocked-retry.test.js unit/openai
 4. **`src/app/(dashboard)/dashboard/providers/[id]/CustomConfigCard.js`** — fork 改了
    `return null` 的显示条件、`save` 的参数和标题下的预设按钮行；另外留意上游是否改了
    `codex.js` 里 `transport.headers` 的结构（`headerPresets.js` 依赖它）
+5. **`open-sse/handlers/chatCore.js`**、**`open-sse/translator/concerns/thinkingUnified.js`** —
+   保留客户端思考优先级与 Responses reasoning 选项，流式决策继续遵循上游
+6. **`open-sse/executors/base.js`**、**`open-sse/config/runtimeConfig.js`** —
+   保留 Responses 的独立响应头超时预算，以及取消请求后不再重试的保护
 
 ## 本地开发
 

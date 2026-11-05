@@ -1,6 +1,7 @@
 # Fork unreleased (2026-11-05)
 
 ## Fixes
+- **Responses client settings and timeouts**: preserve client reasoning effort and Responses reasoning options instead of overwriting them with provider defaults. Compatible Responses nodes allow 200 seconds for buffered response headers (configurable); caller cancellation stops dispatch/retries immediately.
 - **Compatible Responses reasoning**: convert the unified thinking normalizer's top-level `reasoning_effort` to `reasoning.effort` before sending to Responses nodes, fixing ZCode → zzz `400 Unsupported parameter: reasoning_effort`. Preserve explicit `none` and supported `max`; adaptive `auto` uses the upstream default. Chat nodes keep their existing format.
 - **Codex header preset**: generate and persist a per-node `x-codex-installation-id` alongside `originator` and `User-Agent`, fixing the verified 403 client restriction on zzz. Reapplying the preset retains the existing installation identity and other custom headers.
 - **CLI packaging**: exclude `.build-home` from copied standalone files so the build-time database and generated machine identity are not shipped.

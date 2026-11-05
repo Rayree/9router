@@ -34,6 +34,7 @@ vi.mock("@/lib/usageDb.js", () => ({
 }));
 
 const { handleChatCore } = await import("../../open-sse/handlers/chatCore.js");
+const { DefaultExecutor } = await import("../../open-sse/executors/default.js");
 
 const NODE_ID = "openai-compatible-responses-00000000-0000-4000-8000-000000000000";
 const TEXT = "pong";
@@ -79,7 +80,7 @@ const BODIES = {
   claude: { model: "gpt-5.6-luna", stream: false, max_tokens: 64, messages: [{ role: "user", content: "Reply with exactly: pong" }] },
 };
 
-async function callNode(sourceFormat, { body = BODIES[sourceFormat], headers } = {}) {
+async function callNode(sourceFormat, { body = BODIES[sourceFormat], headers, providerThinking } = {}) {
   executeMock.mockImplementationOnce(async (args) => upstreamReply(args));
   const result = await handleChatCore({
     body: structuredClone(body),
@@ -88,6 +89,7 @@ async function callNode(sourceFormat, { body = BODIES[sourceFormat], headers } =
     credentials: { apiKey: "test-key", providerSpecificData: { apiType: "responses", baseUrl: "https://relay.example/v1" } },
     connectionId: "compat-responses-test",
     sourceFormatOverride: sourceFormat,
+    providerThinking,
     log: { debug: vi.fn(), info: vi.fn(), warn: vi.fn() },
   });
   const wireBody = executeMock.mock.calls.at(-1)[0].body;
@@ -137,5 +139,41 @@ describe("openai-compatible Responses node + non-stream client (via real handleC
     const json = JSON.parse(text);
     expect(json.type).toBe("message");
     expect(json.content.find((b) => b.type === "text").text).toBe(TEXT);
+  });
+});
+
+describe("compatible Responses client thinking takes priority over node defaults", () => {
+  beforeEach(() => vi.clearAllMocks());
+
+  it.each(["max", "on", "off"])("preserves xhigh and summary when the node default is %s", async (mode) => {
+    const reasoning = { effort: "xhigh", summary: "detailed" };
+    const { wireBody } = await callNode("openai-responses", {
+      body: { ...BODIES["openai-responses"], reasoning },
+      providerThinking: { mode },
+    });
+    const wire = new DefaultExecutor(NODE_ID).transformRequest("gpt-5.6-luna", wireBody, false, {});
+    expect(wire.reasoning).toEqual(reasoning);
+    expect(wire).not.toHaveProperty("reasoning_effort");
+    expect(wire.stream).toBe(false);
+  });
+
+  it("uses the node default only when no client effort was supplied", async () => {
+    const { wireBody } = await callNode("openai-responses", {
+      body: { ...BODIES["openai-responses"], reasoning: { summary: "auto" } },
+      providerThinking: { mode: "max" },
+    });
+    const wire = new DefaultExecutor(NODE_ID).transformRequest("gpt-5.6-luna", wireBody, false, {});
+    expect(wire.reasoning).toEqual({ effort: "max", summary: "auto" });
+  });
+
+  it.each([
+    ["openai", { reasoning_effort: "low" }, "low"],
+    ["claude", { thinking: { type: "enabled", budget_tokens: 8192 } }, "medium"],
+    ["claude", { output_config: { effort: "high" } }, "high"],
+    ["openai-responses", { reasoning: { effort: "none" } }, "none"],
+  ])("preserves client thinking for %s %j", async (source, thinking, effort) => {
+    const { wireBody } = await callNode(source, { body: { ...BODIES[source], ...thinking }, providerThinking: { mode: "max" } });
+    const wire = new DefaultExecutor(NODE_ID).transformRequest("gpt-5.6-luna", wireBody, false, {});
+    expect(wire.reasoning.effort).toBe(effort);
   });
 });

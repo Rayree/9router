@@ -63,6 +63,13 @@ export const EMPTY_PEEK_DEADLINE_MS = envMs("EMPTY_PEEK_DEADLINE_MS", 45 * 1000)
 // Fetch connect timeout: abort if upstream doesn't return response headers within this duration
 export const FETCH_CONNECT_TIMEOUT_MS = envMs("FETCH_CONNECT_TIMEOUT_MS", 60 * 1000);
 
+// Compatible Responses relays may buffer headers during prompt prefill.
+// Use the first-chunk budget unless the operator explicitly overrides it.
+export const COMPAT_RESPONSES_HEADERS_TIMEOUT_MS = envMs(
+  "COMPAT_RESPONSES_HEADERS_TIMEOUT_MS",
+  envMs("FETCH_CONNECT_TIMEOUT_MS", STREAM_FIRST_CHUNK_TIMEOUT_MS),
+);
+
 // Gemini native TTS fetch timeout: abort if Google does not return response headers in time.
 export const GEMINI_NATIVE_TTS_FETCH_TIMEOUT_MS = envMs("GEMINI_NATIVE_TTS_FETCH_TIMEOUT_MS", 45 * 1000);
 
