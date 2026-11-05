@@ -26,9 +26,11 @@ hiyo 等）能通过 9router 代理，为此加了 `simulateCodex` 开关。上�
 | 改动 | 文件 | 说明 |
 |------|------|------|
 | 403 渠道拦截透明重试 | `open-sse/executors/default.js`（`execute()` override）、`open-sse/config/errorConfig.js`、`tests/unit/compatible-ide-blocked-retry.test.js` | 多渠道 new-api 中转对部分渠道返回 403 `ide_request_blocked` 时原样重放最多 2 次（换渠道），并把该错误的冷却从 2 分钟降到 5 秒 |
+| Responses 节点思考参数修复 | `open-sse/executors/default.js`（`transformRequest()`）、`tests/unit/compatible-responses-reasoning.test.js` | 统一思考处理仍输出 Chat 格式，在发送 Responses 节点前转换为 `reasoning.effort`；修复 ZCode → zzz 的 400，保留 `max`/`none`，`auto` 使用上游默认值 |
 | Responses 节点非流式修复 | `open-sse/handlers/chatCore/nonStreamingHandler.js`、`open-sse/transformer/streamToJsonConverter.js`、`tests/unit/openai-responses-nonstream.test.js`、`tests/unit/compatible-responses-nonstream-routing.test.js` | 详见文末「hiyo.top 非流式修复」节；`chatCore.js` 已于 2026-11-01 恢复上游版本 |
 | 国内网络探测 | `src/lib/tunnel/shared/internetCheck.js`、`src/lib/tunnel/shared/dnsResolver.js` | 联网检查与 DNS 用 223.5.5.5 替代 1.1.1.1 |
 | Custom Headers「一键设置」 | `src/app/(dashboard)/dashboard/providers/[id]/headerPresets.js`、`CustomConfigCard.js`、`tests/unit/header-presets.test.js` | compat 节点显示 Custom Headers 卡片，并提供「Codex 客户端」预设按钮，见「Codex 客户端模拟」节 |
+| CLI 打包隔离 | `cli/scripts/build-cli.js` | 复制 standalone 时排除 `.build-home`，避免夹带构建期间生成的数据库和机器标识 |
 | 文档 | `FORK.md`、`CLAUDE.md` 顶部 fork 规则、`AGENTS.md`（→ `CLAUDE.md` 软链接） | |
 
 ## Codex 客户端模拟（改用上游 Custom Headers）
@@ -40,15 +42,16 @@ hiyo 等）能通过 9router 代理，为此加了 `simulateCodex` 开关。上�
 （API `PUT /api/providers/{id}/overrides` 本身接受 compat 节点）。
 
 fork 为此加了「一键设置」按钮：compat 节点（`openai-compatible-*`）的详情页
-总会显示 Custom Headers 卡片，标题下有 **Codex 客户端** 按钮，点一下把下面两个头
-写入表格并立即保存（已有的同名头会被替换，其他自定义头保留）：
+总会显示 Custom Headers 卡片，标题下有 **Codex 客户端** 按钮，点一下把下面三个头
+写入表格并立即保存（身份头会更新，已有安装标识会复用，其他自定义头保留）：
 
 | Header | Value |
 |--------|-------|
 | `originator` | `codex_cli_rs` |
 | `User-Agent` | `codex_cli_rs/<CODEX_CLI_VERSION>`（2026-11-01 为 `0.159.0`） |
+| `x-codex-installation-id` | 首次应用时独立生成的 UUID，保存到该节点，重复点击复用 |
 
-取值直接读 `open-sse/providers/registry/codex.js` 的 `transport.headers`，上游
+`originator` 和 `User-Agent` 直接读 `open-sse/providers/registry/codex.js` 的 `transport.headers`，上游
 升级 Codex 版本号时按钮跟着变。实现：`src/app/(dashboard)/dashboard/providers/[id]/headerPresets.js`
 （预设定义 + 合并逻辑）、同目录 `CustomConfigCard.js`（显示条件、按钮、`save(nextRows)`），
 测试 `tests/unit/header-presets.test.js`。
@@ -66,10 +69,49 @@ fork 为此加了「一键设置」按钮：compat 节点（`openai-compatible-*
 
 同时测的 fengwind（526）、bohr / jianzhile（503 无可用渠道）、hyb（401 令牌无效）
 在加不加模拟头时结果完全相同，是站点自身问题，不能说明是否需要 `session_id`。
-如果以后遇到加了上面两个头仍被识别为非 Codex 客户端的站点，可能是它校验
-`session_id`，届时需要在 fork 里重新加回自动注入。
+
+2026-11-04 复现 `zzz`（`api.zzzcoding.org`，`gpt-6-astra`）拒绝 ZCode 请求：
+
+| 请求头 | 结果 |
+|--------|------|
+| 旧预设：`originator` + `User-Agent` | 403 `This account only allows Codex official clients` |
+| 旧预设 + `session_id` | 同样 403 |
+| 旧预设 + `x-codex-installation-id` | 200 SSE；通过本机 9router `/v1/messages` 返回 `OK` 并正常结束 |
+
+因此预设补上安装标识，无需恢复 `simulateCodex` 或放宽请求头校验。
+标识由本项目独立生成，不读取官方客户端的身份文件，也不使用机器 ID、账号 ID 或凭据。
+旧配置升级后需再点一次预设才会补上；本机 `zzz` 已通过 overrides API 补齐并验证。
+这个结果仅说明已验证站点所需的字段，不保证通过所有站点的自定义客户端校验。
+
+2026-11-05 已重新打包并安装到本机全局 CLI（仍标为 `0.5.112`），重启了 `:20128`。
+从新 tarball 启动的隔离实例已通过浏览器验证「重置 → 一键设置 → 刷新 → 再次设置」，
+三个头均正常保存，重复点击保留安装标识；实际网关的页面 chunk 与新包一致，
+`zzz/gpt-6-astra` 经 `/v1/messages` 流式调用返回 `OK` 和 `message_stop`。
+升级前已打开的页面需强制刷新，否则旧 JavaScript 按钮仍只会填两个头。
 
 库里 `providerNodes.data` 中残留的 `simulateCodex: true` 字段不再被读取，无害。
+
+## ZCode → zzz 思考参数 400（2026-11-05）
+
+ZCode 的 `new-provider-3` 使用 Anthropic Messages 协议连接本机 `:20128/v1`，
+模型为 `zzz/gpt-6-astra`。补齐客户端头以后，带思考参数的请求仍然返回
+`400 Unsupported parameter: reasoning_effort`：请求翻译后，统一思考处理
+`applyThinking` 按模型能力又写入了 Chat 顶层字段，而 compatible Responses 节点
+走 `DefaultExecutor`，缺少 Codex executor 在发送前做的嵌套格式转换。
+
+修复限定在 `DefaultExecutor.transformRequest()` 的 compatible Responses 分支，
+使用与 URL 构建相同的 `resolveOpenAICompatibleApiType()` 判断；将思考强度写入
+`reasoning.effort` 并删除顶层字段，已有嵌套 effort 优先、保留其他 reasoning 字段。
+`max` 和显式 `none` 保留，`auto` 省略 effort 让上游选择，不改 streaming 策略。
+
+已构建、安装并重启本机服务，147 项相关测试与 8 项构建产物测试通过。
+通过实际 `zzz` 验证了带思考的 Messages 流、max 工具调用、工具结果回传、
+auto 默认强度及 max 非流式 Responses，均有成功的 200 与完整结束响应。
+工具结果阶段第一次等待超过 90 秒，使用确定性工具历史复测成功（约 32 秒）；
+这些检查不代表上游延迟稳定，也没有自动重放用户的完整 ZCode 会话。
+用户随后已在 ZCode 中验证正常。
+部署后公网隧道已恢复，公开 URL 与直接 URL 的健康检查均为 200。
+安全：修复只调整请求体格式，不读取或改动凭据，构建包已检查不包含运行时数据库和身份文件。
 
 ## 分支策略
 
@@ -99,7 +141,7 @@ git push origin mine
 
 # 3. 运行测试验证
 cd tests && npx vitest run unit/compatible-ide-blocked-retry.test.js unit/openai-responses-nonstream.test.js \
-  unit/compatible-responses-nonstream-routing.test.js unit/header-presets.test.js
+  unit/compatible-responses-nonstream-routing.test.js unit/compatible-responses-reasoning.test.js unit/header-presets.test.js
 ```
 
 全量测试在纯上游 master 上本来就有 30 个左右失败，判断回归要对比 master 的失败集合，
@@ -109,7 +151,7 @@ cd tests && npx vitest run unit/compatible-ide-blocked-retry.test.js unit/openai
 
 上游如果修改了以下文件，合并时需手动检查冲突：
 1. **`open-sse/executors/default.js`** — fork 的 `execute()` override（403 `ide_request_blocked`
-   透明重试）可能与上游改动叠加
+   透明重试）和 `transformRequest()` 的 compatible Responses 思考参数转换可能与上游改动叠加
 2. **`open-sse/config/errorConfig.js`** — `ERROR_RULES` 里的两条短冷却规则
 3. **`open-sse/handlers/chatCore/nonStreamingHandler.js`**、**`open-sse/transformer/streamToJsonConverter.js`**
 4. **`src/app/(dashboard)/dashboard/providers/[id]/CustomConfigCard.js`** — fork 改了

@@ -136,6 +136,21 @@ export class DefaultExecutor extends BaseExecutor {
     const transformed = this.applyJsonSchemaFallback(this.applyNousAttribution(model, body, stream, credentials));
 
     if (transformed && typeof transformed === "object") {
+      // Unified thinking uses the Chat shape for compatible nodes. Like the
+      // Codex executor, adapt it at the wire boundary when this node targets
+      // /responses; strict relays reject top-level reasoning_effort.
+      if (this.provider?.startsWith?.("openai-compatible-")
+        && resolveOpenAICompatibleApiType(this.provider, credentials) === "responses") {
+        const current = transformed.reasoning;
+        const reasoning = current && typeof current === "object" && !Array.isArray(current) ? current : {};
+        const effort = reasoning.effort ?? transformed.reasoning_effort;
+        if (typeof effort === "string") {
+          transformed.reasoning = { ...reasoning, effort };
+          // Adaptive thinking asks the upstream to choose, not for an enum "auto".
+          if (effort === "auto") delete transformed.reasoning.effort;
+        }
+        delete transformed.reasoning_effort;
+      }
       // quirk: some openai-compatible providers reject Anthropic's client_metadata field
       if (this.config.quirks?.dropClientMetadata) {
         delete transformed.client_metadata;
