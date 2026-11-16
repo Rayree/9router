@@ -285,6 +285,52 @@ describe("dashboard guard local-only access", () => {
 
     expect(response).toBe(mocks.nextResponse);
   });
+
+  it("rejects remote CommandCode credential import when dashboard login is disabled", async () => {
+    mocks.getSettings.mockResolvedValue({ requireLogin: false });
+
+    const response = await proxy(request("/api/oauth/commandcode/auto-import", { host: "router.example.com" }));
+
+    expect(response.status).toBe(403);
+  });
+
+  it("rejects remote CommandCode credential import even with a dashboard session", async () => {
+    mocks.verifyDashboardAuthToken.mockResolvedValue(true);
+    const req = request("/api/oauth/commandcode/auto-import", { host: "router.example.com" });
+    req.cookies.get.mockReturnValue({ value: "valid-token" });
+
+    expect((await proxy(req)).status).toBe(403);
+  });
+
+  it("requires a session for local CommandCode credential import even when login is disabled", async () => {
+    mocks.getSettings.mockResolvedValue({ requireLogin: false });
+
+    const response = await proxy(localRequest("/api/oauth/commandcode/auto-import"));
+
+    expect(response.status).toBe(401);
+  });
+
+  it("allows local CommandCode credential import with a dashboard session", async () => {
+    mocks.verifyDashboardAuthToken.mockResolvedValue(true);
+    const req = localRequest("/api/oauth/commandcode/auto-import", { origin: "http://localhost:20128" });
+    req.cookies.get.mockReturnValue({ value: "valid-token" });
+
+    expect(await proxy(req)).toBe(mocks.nextResponse);
+  });
+
+  it("rejects CommandCode credential import from an external browser origin", async () => {
+    mocks.verifyDashboardAuthToken.mockResolvedValue(true);
+    const req = localRequest("/api/oauth/commandcode/auto-import", { origin: "https://evil.example.com" });
+    req.cookies.get.mockReturnValue({ value: "valid-token" });
+
+    expect((await proxy(req)).status).toBe(403);
+  });
+
+  it("allows CommandCode credential import with the trusted CLI token", async () => {
+    const req = request("/api/oauth/commandcode/auto-import", { "x-9r-cli-token": "cli-token" });
+
+    expect(await proxy(req)).toBe(mocks.nextResponse);
+  });
 });
 
 describe("dashboard guard helpers", () => {

@@ -4,7 +4,26 @@
 
 本仓库 fork 自 [decolua/9router](https://github.com/decolua/9router)（上游）。
 上游版本基线：**v0.5.40**（2026-07-20，commit `79918c78`）。
-最近同步：**v0.5.112**（2026-11-01，upstream/master `1fe586bb`，257 个上游 commit，
+最近同步：**v0.5.119**（2026-11-17，upstream/master `1855aa44`，68 个上游 commit，
+fast-forward master + merge 进 mine）。4 处冲突均保留双方所需行为：`CHANGELOG.md`、
+`config/runtimeConfig.js`（Responses 200 秒预算 + 上游连接池配置）、
+`executors/default.js`（Responses reasoning 转换 + 上游非流式 stream_options 清理）、
+`translator/concerns/thinkingUnified.js`（Responses reasoning 选项 + 上游 DeepSeek budget 透传）。
+其余自动合并的 fork 文件也已逐个核对，保留取消保护、403 重试、国内 DNS、头预设和构建隔离。
+Codex 预设读取的上游身份版本已更新为 `0.167.1`；已保存的旧 User-Agent 需再点一次预设刷新。
+版本号沿用上游：CLI 为 `0.5.119`，根 dashboard package 为 `0.5.116`。
+
+本轮同时补齐两处上游新增代码的安全边界：CommandCode 本机凭据导入适用现有的本地访问及
+强制认证规则；OpenCode 代理缓存按包含账号密码的 URL 哈希隔离，日志/响应头仅显示代理地址。
+补丁前可复现 6 个失败，补丁后 fork 核心与安全定向测试共 96 项通过。完整离线测试使用相同
+依赖与 CI 设置对比纯 master：master 4558 项通过、mine 4611 项通过，两边均为同一组 61 个
+失败和 3 个加载/发现失败的 suite，新增失败为 0（排除 `real/` 和 `*.live.test.js`）。
+`nvidia-params.test.js` 使用 Node test runner 单独运行，6 项通过。alias/OAuth 快照通过；
+provider 快照的 NVIDIA timeout、SenseNova 和 Runcrate 三处差异在纯 master 上同样存在。
+生产构建 `npm run build` 通过，使用独立 DATA_DIR 与 `.next-cli-build` 输出目录验证。
+既有用量统计 `byApiKey` 属性名包含完整 API Key 的问题仍由 `security-audit.test.js` 报告。
+
+上一次同步：**v0.5.112**（2026-11-01，upstream/master `1fe586bb`，257 个上游 commit，
 fast-forward master + merge 进 mine）。合并前先移除了 fork 自研的 qoder-cn（上游
 v0.5.85 已自带同 id 实现，见下方「Qoder CN」节），冲突因此从 13 个降到 2 个，均为双保留：
 `executors/codex.js`（上游新增 `x-openai-internal-codex-responses-lite` 头 + 当时 fork 的
@@ -12,7 +31,7 @@ v0.5.85 已自带同 id 实现，见下方「Qoder CN」节），冲突因此从
 重试 override + 上游新版 `transformRequest`/`applyNousAttribution`）。
 同日随后移除了 `simulateCodex`，改用上游的 Custom Headers（见「Codex 客户端模拟」节），
 `codex.js` 已回到上游版本。
-上一次同步：v0.5.81（2026-09-19，`a8c9d380`，零冲突）。
+更早同步：v0.5.81（2026-09-19，`a8c9d380`，零冲突）。
 
 ## Fork 目的
 
@@ -33,6 +52,8 @@ hiyo 等）能通过 9router 代理，为此加了 `simulateCodex` 开关。上�
 | 国内网络探测 | `src/lib/tunnel/shared/internetCheck.js`、`src/lib/tunnel/shared/dnsResolver.js` | 联网检查与 DNS 用 223.5.5.5 替代 1.1.1.1 |
 | Custom Headers「一键设置」 | `src/app/(dashboard)/dashboard/providers/[id]/headerPresets.js`、`CustomConfigCard.js`、`tests/unit/header-presets.test.js` | compat 节点显示 Custom Headers 卡片，并提供「Codex 客户端」预设按钮，见「Codex 客户端模拟」节 |
 | CLI 打包隔离 | `cli/scripts/build-cli.js` | 复制 standalone 时排除 `.build-home`，避免夹带构建期间生成的数据库和机器标识 |
+| CommandCode 本机凭据导入保护 | `src/dashboardGuard.js`、`tests/unit/dashboard-guard.test.js` | 与 Cursor/Kiro/Zed 导入一致，限制本地访问并强制校验会话或受信 CLI token，禁用 Dashboard 登录也不能免认证读取本机密钥 |
+| OpenCode 代理账号隔离 | `open-sse/services/opencodeTlsClient.js`、`tests/unit/opencode-wreq-proxy-routing.test.js` | 同地址不同账号/密码使用独立会话；私有缓存键取完整代理 URL 的 SHA-256，展示标识始终移除凭据 |
 | 文档 | `FORK.md`、`CLAUDE.md` 顶部 fork 规则、`AGENTS.md`（→ `CLAUDE.md` 软链接） | |
 
 ## Codex 客户端模拟（改用上游 Custom Headers）
@@ -179,7 +200,8 @@ git push origin mine
 # 3. 运行测试验证
 cd tests && npx vitest run unit/compatible-ide-blocked-retry.test.js unit/openai-responses-nonstream.test.js \
   unit/compatible-responses-nonstream-routing.test.js unit/compatible-responses-reasoning.test.js \
-  unit/compatible-responses-timeout.test.js unit/header-presets.test.js
+  unit/compatible-responses-timeout.test.js unit/header-presets.test.js \
+  unit/dashboard-guard.test.js unit/opencode-wreq-proxy-routing.test.js
 ```
 
 全量测试在纯上游 master 上本来就有 30 个左右失败，判断回归要对比 master 的失败集合，
@@ -199,6 +221,8 @@ cd tests && npx vitest run unit/compatible-ide-blocked-retry.test.js unit/openai
    保留客户端思考优先级与 Responses reasoning 选项，流式决策继续遵循上游
 6. **`open-sse/executors/base.js`**、**`open-sse/config/runtimeConfig.js`** —
    保留 Responses 的独立响应头超时预算，以及取消请求后不再重试的保护
+7. **`src/dashboardGuard.js`**、**`open-sse/services/opencodeTlsClient.js`** —
+   保留 CommandCode 凭据导入的本地/认证限制，以及代理缓存按完整认证上下文隔离的保护
 
 ## 本地开发
 
